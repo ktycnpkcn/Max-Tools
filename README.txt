@@ -1,4 +1,4 @@
-﻿MAX TOOLS  v3.9
+MAX TOOLS  v4.0
 Fast modeling, UV and game-ready tools for Autodesk 3ds Max 2024+
 ===================================================================
 
@@ -91,6 +91,14 @@ LOD & Collision
    Auto LOD               ProOptimizer based, preserves borders / UVs / material IDs
    Collision Generator    Convex, Parts (for walls with openings), Box, Sphere
                           Unreal naming: UCX_ / UBX_ / USP_
+
+Cables
+   Route points           "Add Points" places green dummies (CablePoint_R1_01 ...) by clicking
+                          in a viewport; reorder them in the list. Several routes per scene.
+   Generate Cables        Cable bundles or flat tapes along the route: sag, stiffness, tangle,
+                          twist, spread, ground / air. Every shape setting can be overridden
+                          per point (select points in the list). Cables lie on the ground,
+                          hang between raised points and ride over their own crossings.
 
 TROUBLESHOOTING
 ---------------

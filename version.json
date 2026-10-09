@@ -1,7 +1,7 @@
 {
-  "version": "3.9.1",
-  "build": 27,
-  "notes": "Test update: no functional changes. Used to verify the automatic update flow.",
+  "version": "4.0",
+  "build": 28,
+  "notes": "New Cables page: generate cable bundles and flat tapes along routes of dummy points (sag, stiffness, tangle, twist, spread, per-point overrides).",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",

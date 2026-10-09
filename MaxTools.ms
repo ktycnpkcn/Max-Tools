@@ -1,12 +1,12 @@
 ﻿-- =========================================
--- MaxTools v3.5
+-- MaxTools v4.0
 -- Hızlı modelleme araçları paketi
 -- =========================================
 
 global MT_UI, MT_UIAsm, MT_UIAsmStamp
-global MT_Version = "v3.9.1  ·  build 27"
+global MT_Version = "v4.0  ·  build 28"
 -- Online güncelleme: GitHub'daki version.json'daki build bu sayıdan büyükse güncelleme önerilir
-global MT_BuildNum = 27
+global MT_BuildNum = 28
 global MT_UpdateBase = "https://raw.githubusercontent.com/ktycnpkcn/Max-Tools/main/"
 global MT_OnUIEvent
 global MT_UFind
@@ -2221,6 +2221,1030 @@ fn MT_Collision colType detail grid mergeParts =
 )
 
 -- =========================================
+-- ARAÇLAR: KABLO / BANT
+-- Rota noktaları: yalnızca "CablePoint_R<rota>_<no>" adlı Dummy objeler (başka dummy'ler hiç alınmaz).
+-- Ad oluşturulurken verilir ve değişmez; sıra noktadaki "MT_CableOrder" user property'sindedir.
+-- Noktaya özel ayar: "MT_C_<anahtar>" user property. Rota ayarları: File Properties > Custom "MTCable_R<rota>".
+-- Bir noktadaki ayar o noktadan sonraki aralığı belirler; karmaşa ve yayılma iki nokta arasında yumuşak geçer.
+-- Üretilen kablolar "Cable_R<rota>_<no>" (+ "MT_CableRoute" user property); her Generate'te yeniden oluşturulur.
+-- =========================================
+global MT_CableKeys = #("cSag", "cStiff", "cTangle", "cTwist", "cSpread", "cSurf", "cCount", "cThick", "cSides", "cSect", "cSeed", "cDetail", "cPoly")
+global MT_CableDefs = #("10", "30", "20", "0", "100", "1", "4", "1cm", "6", "1", "1", "4", "0")
+global MT_CablePtKeys = #("cSag", "cStiff", "cTangle", "cTwist", "cSpread", "cSurf")
+
+fn MT_IsDigits s =
+(
+    local ok = s.count > 0
+    for i = 1 to s.count while ok do ok = (findString "0123456789" s[i]) != undefined
+    ok
+)
+
+-- "CablePoint_R2_07" -> #(2, 7); kalıba tam uymuyorsa undefined
+fn MT_CableParse nm =
+(
+    local tk = filterString nm "_" splitEmptyTokens:true
+    if tk.count == 3 and tk[1] == "CablePoint" and tk[2].count > 1 and tk[2][1] == "R" and (MT_IsDigits (substring tk[2] 2 -1)) and (MT_IsDigits tk[3]) then
+        #((substring tk[2] 2 -1) as integer, tk[3] as integer)
+    else undefined
+)
+
+fn MT_CablePtName r n = "CablePoint_R" + r as string + "_" + (formattedPrint n format:"02d")
+fn MT_CableIsPoint o = (classOf o == Dummy and (MT_CableParse o.name) != undefined)
+fn MT_CableIsCable o = ((getUserProp o "MT_CableRoute") != undefined)
+fn MT_CableCmp a b = (if a[1] < b[1] then -1 else if a[1] > b[1] then 1 else 0)
+
+-- Rotanın sahnedeki noktaları, sıraya göre (sırası olmayanlar ad numarasıyla sona)
+fn MT_CablePoints r =
+(
+    local items = #()
+    for o in helpers where classOf o == Dummy do
+    (
+        local pr = MT_CableParse o.name
+        if pr != undefined and pr[1] == r do
+        (
+            local ord = try ((getUserProp o "MT_CableOrder") as float) catch undefined
+            local k = if ord == undefined then 1e6 + pr[2] else ord + pr[2] * 1e-5
+            append items #(k, o)
+        )
+    )
+    qsort items MT_CableCmp
+    local res = #()
+    for it in items do append res it[2]
+    res
+)
+
+-- Yeni nokta numarası: rotadaki en büyük numara + 1 (silinen numara tekrar kullanılmaz)
+fn MT_CableNextNum r =
+(
+    local mx = 0
+    for o in helpers where classOf o == Dummy do
+    (
+        local pr = MT_CableParse o.name
+        if pr != undefined and pr[1] == r and pr[2] > mx do mx = pr[2]
+    )
+    mx + 1
+)
+
+fn MT_CableWriteOrder pts = (for i = 1 to pts.count do setUserProp pts[i] "MT_CableOrder" i)
+
+-- ----- Ayar saklama -----
+fn MT_CablePropName r = "MTCable_R" + r as string
+
+fn MT_CableRouteStr r =
+(
+    local i = fileProperties.findProperty #custom (MT_CablePropName r)
+    if i > 0 then (fileProperties.getPropertyValue #custom i) as string else ""
+)
+
+-- "a=1;b=2" içinden anahtarın değeri (yoksa undefined)
+fn MT_CableKV str key =
+(
+    local res = undefined
+    for part in (filterString str ";") while res == undefined do
+    (
+        local kv = filterString part "="
+        if kv.count == 2 and kv[1] == key do res = kv[2]
+    )
+    res
+)
+
+fn MT_CableDefault key = (local i = findItem MT_CableKeys key; if i > 0 then MT_CableDefs[i] else "0")
+
+fn MT_CableRouteGet r key =
+(
+    local v = MT_CableKV (MT_CableRouteStr r) key
+    if v == undefined then MT_CableDefault key else v
+)
+
+fn MT_CableRouteWrite r str =
+(
+    local nm = MT_CablePropName r
+    if (fileProperties.findProperty #custom nm) > 0 do fileProperties.deleteProperty #custom nm
+    fileProperties.addProperty #custom nm str
+)
+
+fn MT_CableRouteSet r key val =
+(
+    local s = ""
+    for k in MT_CableKeys do s += k + "=" + (if k == key then val else MT_CableRouteGet r k) + ";"
+    MT_CableRouteWrite r s
+)
+
+fn MT_CablePtGet o key =
+(
+    local v = getUserProp o ("MT_C_" + key)
+    if v == undefined then undefined else v as string
+)
+
+-- Noktadaki geçerli değer: noktaya özel varsa o, yoksa rotanınki
+fn MT_CableVal r o key =
+(
+    local v = MT_CablePtGet o key
+    if v == undefined then MT_CableRouteGet r key else v
+)
+
+-- Metin değeri sayıya çevirir; geçersizse varsayılan
+fn MT_CableNum v key =
+(
+    local x = try (v as float) catch undefined
+    if x == undefined then (MT_CableDefault key) as float else x
+)
+
+fn MT_CableHasOv o =
+(
+    local f = false
+    for k in MT_CablePtKeys while not f do f = (MT_CablePtGet o k) != undefined
+    f
+)
+
+-- User property satırını siler
+fn MT_CableDelProp o key =
+(
+    local out = ""
+    for ln in (filterString (getUserPropBuffer o) "\r\n") do
+    (
+        local kv = filterString ln "="
+        if not (kv.count > 0 and (trimLeft (trimRight kv[1])) == key) do out += ln + "\r\n"
+    )
+    setUserPropBuffer o out
+)
+
+-- ----- Arayüz eşitleme -----
+fn MT_CableRoute =
+(
+    local r = if MT_UIAlive() then MT_UI.GetInt "cblRoute" else 1
+    if r < 1 then 1 else r
+)
+
+-- Sahnedeki (noktası ya da kayıtlı ayarı olan) rotalar
+fn MT_CableRoutes =
+(
+    local rs = #()
+    for o in helpers where classOf o == Dummy do
+    (
+        local pr = MT_CableParse o.name
+        if pr != undefined do appendIfUnique rs pr[1]
+    )
+    for i = 1 to (fileProperties.getNumProperties #custom) do
+    (
+        local nm = fileProperties.getPropertyName #custom i
+        if matchPattern nm pattern:"MTCable_R*" do
+        (
+            local v = try ((substring nm 10 -1) as integer) catch undefined
+            if v != undefined do appendIfUnique rs v
+        )
+    )
+    sort rs
+)
+
+-- Listede seçili noktalar (sahnede hâlâ var olanlar)
+fn MT_CableSelNodes =
+(
+    local res = #()
+    if MT_UIAlive() do
+        for nm in (filterString (MT_UI.CableSelNames()) "\n") do
+        (
+            local o = getNodeByName nm exact:true
+            if o != undefined and (MT_CableIsPoint o) do append res o
+        )
+    res
+)
+
+-- Seçili noktalarda bir ayarın durumu: #(gösterilecek değer, bayrak) bayrak: 0 rotadan, 1 hepsinde aynı özel değer, 2 karışık
+fn MT_CableOvState sel key rv =
+(
+    local ovs = #()
+    for o in sel do
+    (
+        local v = MT_CablePtGet o key
+        if v != undefined do append ovs v
+    )
+    if ovs.count == 0 then #(rv, 0)
+    else
+    (
+        local same = ovs.count == sel.count
+        for v in ovs while same do same = (v == ovs[1])
+        #(ovs[1], if same then 1 else 2)
+    )
+)
+
+fn MT_CableShowSettings =
+(
+    if MT_UIAlive() do
+    (
+        local r = MT_CableRoute()
+        local sel = MT_CableSelNodes()
+        local data = ""
+        for k in MT_CableKeys do
+        (
+            local st = #(MT_CableRouteGet r k, 0)
+            if sel.count > 0 and (findItem MT_CablePtKeys k) > 0 do st = MT_CableOvState sel k st[1]
+            data += k + "=" + st[1] + "=" + (st[2] as string) + ";"
+        )
+        local lbl = if sel.count == 0 then ("Route " + r as string + " defaults  ·  select points to override") \
+                    else (sel.count as string + " point(s) selected  ·  per-point overrides")
+        MT_UI.CableShow data lbl (sel.count > 0)
+    )
+)
+
+-- Rota listesini, nokta listesini ve ayarları panele gönderir
+fn MT_CableRefreshUI =
+(
+    if MT_UIAlive() do
+    (
+        local r = MT_CableRoute()
+        local rs = MT_CableRoutes()
+        if (findItem rs r) == 0 do (append rs r; sort rs)
+        local csv = ""
+        for v in rs do csv += v as string + ","
+        MT_UI.CableSetRoutes csv r
+        local items = ""
+        for o in (MT_CablePoints r) do items += o.name + "|" + (if MT_CableHasOv o then "1" else "0") + "\n"
+        MT_UI.CableSetList items
+        MT_CableShowSettings()
+    )
+    OK
+)
+
+-- Ayar değişti: listede nokta seçiliyse ve ayar noktaya özel olabiliyorsa noktalara, değilse rotaya yazılır
+fn MT_CableSet key val =
+(
+    local sel = MT_CableSelNodes()
+    if sel.count > 0 and (findItem MT_CablePtKeys key) > 0 then
+        for o in sel do setUserProp o ("MT_C_" + key) val
+    else MT_CableRouteSet (MT_CableRoute()) key val
+    MT_CableRefreshUI()
+)
+
+fn MT_CableClear keys =
+(
+    local sel = MT_CableSelNodes()
+    if sel.count == 0 then MaxTools_Status "Cables  ·  Select points in the list first." type:#warn
+    else
+    (
+        for o in sel do for k in keys do MT_CableDelProp o ("MT_C_" + k)
+        MT_CableRefreshUI()
+        MaxTools_Status ("Cables  ·  Overrides cleared on " + sel.count as string + " point(s).") type:#ok
+    )
+)
+
+-- Rotayı varsayılan ayarlara döndürür; noktalarda özel ayar varsa onları da silmeyi sorar
+fn MT_CableResetDefaults =
+(
+    local r = MT_CableRoute()
+    local pts = MT_CablePoints r
+    local nOv = 0
+    for o in pts do if MT_CableHasOv o do nOv += 1
+    local clearPts = false
+    if nOv > 0 do
+        clearPts = queryBox ("Route " + r as string + " settings will be reset to defaults.\n\n" + nOv as string + \
+                             " point(s) also have their own settings. Clear those too?") title:"MaxTools"
+    local s = ""
+    for i = 1 to MT_CableKeys.count do s += MT_CableKeys[i] + "=" + MT_CableDefs[i] + ";"
+    MT_CableRouteWrite r s
+    if clearPts do for o in pts do for k in MT_CablePtKeys do MT_CableDelProp o ("MT_C_" + k)
+    MT_CableRefreshUI()
+    MaxTools_Status ("Cables  ·  Route " + r as string + " reset to defaults" + (if clearPts then " (point overrides cleared)." else ".")) type:#ok
+)
+
+fn MT_CableSelect =
+(
+    local sel = MT_CableSelNodes()
+    if sel.count > 0 do
+    (
+        with undo off (select sel)
+        redrawViews()
+    )
+    MT_CableShowSettings()
+)
+
+fn MT_CableZoom =
+(
+    local sel = MT_CableSelNodes()
+    if sel.count > 0 do
+    (
+        select sel
+        max zoomext sel
+    )
+)
+
+-- ----- Nokta ekleme / silme / sıra -----
+fn MT_CableDummySize =
+(
+    local s = try (units.decodeValue "10cm") catch undefined
+    if s == undefined or s <= 0 then 10.0 else s
+)
+
+-- Işının sahnede çarptığı ilk yüzey (kablolar ve gizli objeler hariç); yoksa undefined
+fn MT_CableSurfaceHit rr =
+(
+    local best = undefined, bestD = 1e30
+    local hits = try (intersectRayScene rr) catch #()
+    for hh in hits do
+    (
+        local nd = hh[1]
+        if isValidNode nd and not nd.isHidden and not (MT_CableIsCable nd) do
+        (
+            local d = distance rr.pos hh[2].pos
+            if d < bestD do (bestD = d; best = hh[2].pos)
+        )
+    )
+    best
+)
+
+-- Etkin görünümde, tıklanan noktadan geçen görüş ışını
+fn MT_CableViewRay p =
+(
+    local vtm = inverse (getViewTM())
+    if viewport.IsPerspView() then
+    (
+        local eye = vtm.row4
+        ray eye (normalize (p - eye))
+    )
+    else
+    (
+        local dir = -(normalize vtm.row3)
+        ray (p - dir * 1e5) dir
+    )
+)
+
+-- Görünümde tıklayarak art arda nokta koyar (sağ tık / Esc bitirir). Listede seçili nokta varsa arkasına eklenir.
+fn MT_CableAddPoints =
+(
+    local r = MT_CableRoute()
+    local pts = MT_CablePoints r
+    local insertAt = pts.count + 1
+    local selIdx = 0
+    for o in MT_CableSelNodes() do
+    (
+        local i = findItem pts o
+        if i > selIdx do selIdx = i
+    )
+    if selIdx > 0 do insertAt = selIdx + 1
+    local sz = MT_CableDummySize()
+    local added = 0, done = false
+    MaxTools_Status "Cables  ·  Click in a viewport to place points (snaps work). Right-click or Esc to finish." type:#busy
+    while not done do
+    (
+        local p = pickPoint snap:#3D
+        if classOf p != Point3 then done = true
+        else
+        (
+            -- Snap kapalıyken tıklanan yüzeyin üstüne koy (yoksa ızgaraya)
+            if not snapMode.active do
+            (
+                local hit = MT_CableSurfaceHit (MT_CableViewRay p)
+                if hit != undefined do p = hit
+            )
+            undo "Add Cable Point" on
+            (
+                local dm = Dummy name:(MT_CablePtName r (MT_CableNextNum r)) boxsize:[sz, sz, sz] wirecolor:(color 40 200 80)
+                dm.pos = p
+                insertItem dm pts insertAt
+                MT_CableWriteOrder pts
+            )
+            insertAt += 1
+            added += 1
+            MT_CableRefreshUI()
+            MaxTools_Status ("Cables  ·  " + added as string + " point(s) placed. Keep clicking, right-click or Esc to finish.") type:#busy
+        )
+    )
+    MaxTools_Status ("Cables  ·  " + added as string + " point(s) added to route " + r as string + ".") type:(if added > 0 then #ok else #info)
+)
+
+fn MT_CableRemove =
+(
+    local sel = MT_CableSelNodes()
+    if sel.count == 0 then MaxTools_Status "Cables  ·  Select points in the list first." type:#warn
+    else
+    (
+        local n = sel.count
+        undo "Remove Cable Points" on (delete sel)
+        MT_CableRefreshUI()
+        MaxTools_Status ("Cables  ·  " + n as string + " point(s) removed.") type:#ok
+    )
+)
+
+-- Paneldeki liste sırasını noktalara yazar (Up / Down sonrası)
+fn MT_CableApplyOrder =
+(
+    local pts = #()
+    for nm in (filterString (MT_UI.CableNames()) "\n") do
+    (
+        local o = getNodeByName nm exact:true
+        if o != undefined and (MT_CableIsPoint o) do append pts o
+    )
+    undo "Reorder Cable Points" on (MT_CableWriteOrder pts)
+    MT_CableRefreshUI()
+)
+
+-- ----- Rotalar -----
+fn MT_CableNewRoute =
+(
+    local cur = MT_CableRoute()
+    local rs = MT_CableRoutes()
+    local n = 1
+    for v in rs do if v >= n do n = v + 1
+    if cur >= n do n = cur + 1
+    -- Yeni rota mevcut rotanın ayarlarını devralır
+    local s = ""
+    for k in MT_CableKeys do s += k + "=" + (MT_CableRouteGet cur k) + ";"
+    MT_CableRouteWrite n s
+    MT_UI.CableSetRoutes "" n
+    MT_CableRefreshUI()
+    MaxTools_Status ("Cables  ·  Route " + n as string + " created. Use Add Points to place its points.") type:#ok
+)
+
+fn MT_CableDeleteRoute =
+(
+    local r = MT_CableRoute()
+    local pts = MT_CablePoints r
+    local cabs = for o in objects where (getUserProp o "MT_CableRoute") == r collect o
+    local msg = "Delete route " + r as string + "?\n" + pts.count as string + " point(s) and " + cabs.count as string + " cable object(s) will be deleted."
+    if queryBox msg title:"MaxTools" do
+    (
+        undo "Delete Cable Route" on (delete pts; delete cabs)
+        local nm = MT_CablePropName r
+        if (fileProperties.findProperty #custom nm) > 0 do fileProperties.deleteProperty #custom nm
+        local rs = MT_CableRoutes()
+        MT_UI.CableSetRoutes "" (if rs.count > 0 then rs[1] else 1)
+        MT_CableRefreshUI()
+        MaxTools_Status ("Cables  ·  Route " + r as string + " deleted.") type:#ok
+    )
+)
+
+-- ----- Kablo geometrisi -----
+fn MT_Sinh x = (exp x - exp (-x)) / 2.0
+fn MT_Asinh x = log (x + sqrt (x * x + 1.0))
+fn MT_Smooth01 t = (local u = amax 0.0 (amin 1.0 t); u * u * (3.0 - 2.0 * u))
+
+-- Zincir eğrisi (catenary) parametresi: yatay mesafe d, yükseklik farkı hh, kablo uzunluğu ln. Gergin ise undefined.
+fn MT_CatenaryA d hh ln =
+(
+    local target = sqrt (amax 0.0 (ln * ln - hh * hh))
+    if target <= d * 1.0001 then undefined
+    else
+    (
+        local lo = log (d * 1e-3), hi = log (d * 1e4)
+        for it = 1 to 60 do
+        (
+            local md = (lo + hi) / 2.0
+            local a = exp md
+            local x = d / (2.0 * a)
+            local v = if x > 40.0 then 1e30 else 2.0 * a * (MT_Sinh x)
+            if v > target then lo = md else hi = md
+        )
+        exp ((lo + hi) / 2.0)
+    )
+)
+
+-- Catenary yüksekliği (y(0)=0, y(d)=hh); sayısal olarak kararlı biçim
+fn MT_CatenaryY x a x0 = 2.0 * a * (MT_Sinh ((x - 2.0 * x0) / (2.0 * a))) * (MT_Sinh (x / (2.0 * a)))
+
+-- org noktasından aşağı ışınla en yüksek yüzeyin Z'si; yoksa undefined
+fn MT_CableFloorZ cands org =
+(
+    local best = undefined
+    local rr = ray org [0, 0, -1]
+    for o in cands do
+    (
+        local hh = try (intersectRay o rr) catch undefined
+        if hh != undefined and hh.pos.z <= org.z and (best == undefined or hh.pos.z > best) do best = hh.pos.z
+    )
+    best
+)
+
+-- Değişken pencereli kutu ortalaması (uçlar sabit kalır). win[j]: örnek sayısı olarak yarı pencere
+fn MT_CableBlur pts win =
+(
+    local n = pts.count
+    local pre = #([0, 0, 0])
+    for j = 1 to n do append pre (pre[j] + pts[j])
+    local res = #()
+    for j = 1 to n do
+    (
+        local m = win[j]
+        if m > j - 1 do m = j - 1
+        if m > n - j do m = n - j
+        append res ((pre[j + m + 1] - pre[j - m]) / (2.0 * m + 1.0))
+    )
+    res
+)
+
+-- Zemine oturtma: zemin aralığında kablo yere yatar, havada zeminin altına inmez. Dönüş: örnek başına zeminde olma (0..1)
+fn MT_CableClamp cl flz sIdx gspan cr =
+(
+    local gnd = #()
+    for j = 1 to cl.count do
+    (
+        local p = cl[j]
+        local g = if gspan[sIdx[j]] then 1.0 else 0.0
+        if flz[j] != undefined do
+        (
+            local top = flz[j] + cr
+            if gspan[sIdx[j]] then p.z = top
+            else
+            (
+                if p.z < top do p.z = top
+                g = 1.0 - (amin 1.0 ((p.z - top) / (cr * 4.0)))
+            )
+            cl[j] = p
+        )
+        append gnd g
+    )
+    gnd
+)
+
+-- Rotanın orta çizgisi. Dönüş: #(noktalar, aralık no, aralık içi oran, zemin z, zeminde olma, sarkma derinliği)
+fn MT_CableCenterline r pts cr cands h pSag pStf pW =
+(
+    local nPts = pts.count
+    local dsz = MT_CableDummySize()
+    -- Uç noktalar: zemindeyse kablo yarıçapı kadar yukarıda
+    local anc = #(), gpt = #()
+    for i = 1 to nPts do
+    (
+        local p = pts[i].pos
+        local mode = (MT_CableNum (MT_CableVal r pts[i] "cSurf") "cSurf") as integer
+        local fz = if mode == 3 then undefined else MT_CableFloorZ cands (p + [0, 0, amax (cr * 0.5) (dsz * 0.05)])
+        local onG = false
+        if mode == 2 then onG = true
+        else if mode == 1 and fz != undefined do onG = (p.z - fz) <= (amax (cr * 3.0) (dsz * 0.6))
+        append gpt onG
+        append anc (if onG then [p.x, p.y, (if fz != undefined then fz else p.z) + cr] else p)
+    )
+
+    -- Ham örnekler: zemin aralığı düz çizgi, hava aralığı zincir eğrisi
+    local cl = #(), sIdx = #(), frc = #(), chz = #(), gspan = #(), droop = #(), spanLen = #()
+    for i = 1 to nPts - 1 do
+    (
+        local a = anc[i], b = anc[i + 1]
+        local onGround = gpt[i] and gpt[i + 1]
+        local sag = if onGround then 0.0 else pSag[i]
+        local dxy = [b.x - a.x, b.y - a.y, 0]
+        local d = length dxy
+        local hh = b.z - a.z
+        local chord = distance a b
+        local cat = undefined
+        if sag > 0.2 and d > chord * 0.01 do cat = MT_CatenaryA d hh (chord * (1.0 + sag / 100.0))
+        local m = amax 4 ((ceil (chord * (1.0 + sag / 100.0) / h)) as integer)
+        local u = if d > 1e-6 then dxy / d else [1, 0, 0]
+        local x0 = 0.0
+        if cat != undefined do x0 = d / 2.0 - cat * (MT_Asinh (hh / (2.0 * cat * (MT_Sinh (d / (2.0 * cat))))))
+        local dmax = 0.0
+        local lastJ = if i == nPts - 1 then m else m - 1
+        for j = 0 to lastJ do
+        (
+            local f = j as float / m
+            local lin = a + (b - a) * f
+            local q = lin
+            if cat != undefined do q = a + u * (d * f) + [0, 0, MT_CatenaryY (d * f) cat x0]
+            if lin.z - q.z > dmax do dmax = lin.z - q.z
+            append cl q
+            append sIdx i
+            append frc f
+            append chz lin.z
+        )
+        append gspan onGround
+        append droop dmax
+        append spanLen chord
+    )
+
+    -- Zemin yüksekliği: seyrek örneklerde aşağı ışın, aralar doğrusal
+    local nS = cl.count
+    local flz = #()
+    for j = 1 to nS do append flz undefined
+    local stepK = amax 1 ((ceil (nS / 300.0)) as integer)
+    local lift = amax (cr * 4.0) (dsz * 0.5)
+    local js = #()
+    for j = 1 to nS by stepK do append js j
+    if js[js.count] != nS do append js nS
+    for j in js do flz[j] = MT_CableFloorZ cands [cl[j].x, cl[j].y, (amax chz[j] cl[j].z) + lift]
+    for t = 1 to js.count - 1 do
+    (
+        local j0 = js[t], j1 = js[t + 1]
+        local z0 = flz[j0], z1 = flz[j1]
+        if z0 != undefined and z1 != undefined do
+            for j = j0 + 1 to j1 - 1 do flz[j] = z0 + (z1 - z0) * (j - j0) / ((j1 - j0) as float)
+    )
+    MT_CableClamp cl flz sIdx gspan cr
+
+    -- Sertlik: köşeleri yuvarlar, sert kablo daha geniş yay çizer ve daha az sarkar
+    local win = #()
+    for j = 1 to nS do
+    (
+        local i = sIdx[j]
+        local st = (amax 0.0 (amin 100.0 pStf[i])) / 100.0
+        local lmin = spanLen[i]
+        if i > 1 do lmin = amin lmin spanLen[i - 1]
+        if i < spanLen.count do lmin = amin lmin spanLen[i + 1]
+        -- Dönüş en az demetin yarı genişliği kadar yumuşak olsun (yoksa içteki kablolar düğüm atar)
+        local w = amax (cr * 2.0 + st * st * 0.5 * lmin) (amin (pW[i] * 1.2) (lmin * 0.5))
+        append win ((w / h) as integer)
+    )
+    cl = MT_CableBlur cl win
+    cl = MT_CableBlur cl win
+    local gnd = MT_CableClamp cl flz sIdx gspan cr
+    #(cl, sIdx, frc, flz, gnd, droop)
+)
+
+-- Rota kendini kestiğinde sonraki geçiş öncekinin üstüne çıkar (kablolar iç içe geçmez, üstüne düşmüş gibi durur).
+-- hw: örnek başına demet yarı genişliği, hh: yarı yüksekliği. cl yerinde değişir.
+fn MT_CableLiftCrossings cl sArr hw hh =
+(
+    local nS = cl.count
+    local stepC = amax 1 ((ceil (nS / 400.0)) as integer)
+    local idx = #()
+    for j = 1 to nS by stepC do append idx j
+    local lift = #()
+    for j = 1 to nS do append lift 0.0
+    local crossed = false
+    for a = 2 to idx.count do
+    (
+        local j = idx[a]
+        local pj = cl[j]
+        for b = 1 to a - 1 do
+        (
+            local i = idx[b]
+            local wsum = hw[i] + hw[j]
+            if sArr[j] - sArr[i] > wsum * 3.0 do
+            (
+                local qi = cl[i]
+                local dx = pj.x - qi.x, dy = pj.y - qi.y
+                local dxy = sqrt (dx * dx + dy * dy)
+                if dxy < wsum do
+                (
+                    local zi = qi.z + lift[i]
+                    local need = hh[i] + hh[j]
+                    if pj.z < zi + need and pj.z > zi - need do
+                    (
+                        local k = amin 1.0 ((wsum - dxy) / (wsum * 0.3))
+                        local l = (zi + need - pj.z) * k
+                        if l > lift[j] do (lift[j] = l; crossed = true)
+                    )
+                )
+            )
+        )
+    )
+    if crossed do
+    (
+        -- Kaba örneklerden doldur, sonra genişletip yumuşat (rampa)
+        for a = 1 to idx.count do
+        (
+            local j = idx[a]
+            local jEnd = if a < idx.count then idx[a + 1] - 1 else nS
+            for t = j + 1 to jEnd do lift[t] = lift[j]
+        )
+        local hwMax = 0.0
+        for v in hw do if v > hwMax do hwMax = v
+        local ds = sArr[nS] / (amax 1 (nS - 1))
+        local m = amax 1 (amin 60 ((hwMax * 2.5 / (amax ds 1e-6)) as integer))
+        local dil = #(), win = #()
+        for j = 1 to nS do
+        (
+            local mx = 0.0
+            for t = (amax 1 (j - m)) to (amin nS (j + m)) do if lift[t] > mx do mx = lift[t]
+            append dil [mx, 0, 0]
+            append win m
+        )
+        local sm = MT_CableBlur dil win
+        for j = 1 to nS do
+        (
+            local p = cl[j]
+            p.z += amax sm[j].x lift[j]
+            cl[j] = p
+        )
+    )
+    crossed
+)
+
+fn MT_CableSetProp o p v = (try (setProperty o p v) catch ())
+
+-- Bant açısını -90..90 aralığına indirir (180° dönmüş bant aynı düzlemdedir); yere inerken gereksiz dönmeyi önler
+fn MT_CableBandAngle a =
+(
+    local x = mod a 180.0
+    if x < 0 do x += 180.0
+    if x > 90.0 do x -= 180.0
+    x
+)
+
+-- Yuvarlak kablo: renderable spline (kalınlık / kenar sayısı sonradan da değiştirilebilir)
+fn MT_CableSpline pts th sides =
+(
+    local sp = SplineShape()
+    addNewSpline sp
+    for p in pts do addKnot sp 1 #smooth #curve p
+    updateShape sp
+    MT_CableSetProp sp #render_renderable true
+    MT_CableSetProp sp #render_displayRenderMesh true
+    MT_CableSetProp sp #render_useViewportSettings false
+    MT_CableSetProp sp #render_thickness th
+    MT_CableSetProp sp #render_sides sides
+    MT_CableSetProp sp #render_mapcoords true
+    MT_CableSetProp sp #steps 2
+    sp
+)
+
+-- Yassı bant: dikdörtgen kesitli mesh (genişlik wd yönünde, kalınlık nd yönünde), UV boyuna
+fn MT_CableRibbon pts wd nd wdt tk =
+(
+    local np = pts.count
+    local vs = #(), fs = #(), tfs = #(), sg = #(), hid = #()
+    for j = 1 to np do
+    (
+        local a = wd[j] * (wdt / 2.0), b = nd[j] * (tk / 2.0)
+        append vs (pts[j] - a - b)
+        append vs (pts[j] + a - b)
+        append vs (pts[j] + a + b)
+        append vs (pts[j] - a + b)
+    )
+    for j = 1 to np - 1 do
+    (
+        local o0 = (j - 1) * 4, o1 = j * 4
+        local t0 = (j - 1) * 5, t1 = j * 5
+        for k = 1 to 4 do
+        (
+            local k2 = (mod k 4) as integer + 1
+            local grp = if k == 1 or k == 3 then 1 else 2
+            append fs [o0 + k, o1 + k2, o0 + k2]; append tfs [t0 + k, t1 + k + 1, t0 + k + 1]; append sg grp; append hid 1
+            append fs [o0 + k, o1 + k, o1 + k2]; append tfs [t0 + k, t1 + k, t1 + k + 1]; append sg grp; append hid 3
+        )
+    )
+    local lv = (np - 1) * 4, lt = (np - 1) * 5
+    append fs [1, 2, 3]; append tfs [1, 2, 3]; append sg 4; append hid 3
+    append fs [1, 3, 4]; append tfs [1, 3, 4]; append sg 4; append hid 1
+    append fs [lv + 1, lv + 3, lv + 2]; append tfs [lt + 1, lt + 3, lt + 2]; append sg 4; append hid 1
+    append fs [lv + 1, lv + 4, lv + 3]; append tfs [lt + 1, lt + 4, lt + 3]; append sg 4; append hid 3
+
+    local m = mesh vertices:vs faces:fs
+    local per = 2.0 * (wdt + tk)
+    local us = #(0.0, wdt / per, (wdt + tk) / per, (2.0 * wdt + tk) / per, 1.0)
+    setNumTVerts m (np * 5)
+    local s = 0.0
+    for j = 1 to np do
+    (
+        if j > 1 do s += distance pts[j] pts[j - 1]
+        for k = 1 to 5 do setTVert m ((j - 1) * 5 + k) [us[k], s / per, 0]
+    )
+    buildTVFaces m
+    for f = 1 to fs.count do
+    (
+        setTVFace m f tfs[f]
+        setFaceSmoothGroup m f (bit.set 0 sg[f] true)
+        setEdgeVis m f hid[f] false
+    )
+    update m
+    -- Dörtgen poligonlara çevir (gizli köşegenler kalkar, görüntüde nokta/iz kalmaz)
+    convertTo m Editable_Poly
+    m
+)
+
+-- Rotadaki tüm kabloları üretir; oluşturulan objeleri döndürür
+fn MT_CableBuild r pts th =
+(
+    local cr = th / 2.0
+    local nPts = pts.count
+    local nC = (amax 1 (amin 50 (MT_CableNum (MT_CableRouteGet r "cCount") "cCount"))) as integer
+    local sides = (amax 3 (amin 24 (MT_CableNum (MT_CableRouteGet r "cSides") "cSides"))) as integer
+    local flat = (MT_CableNum (MT_CableRouteGet r "cSect") "cSect") == 2
+    local seedBase = (MT_CableNum (MT_CableRouteGet r "cSeed") "cSeed") as integer
+    local det = amax 1.0 (amin 10.0 (MT_CableNum (MT_CableRouteGet r "cDetail") "cDetail"))
+    local toPoly = (MT_CableRouteGet r "cPoly") == "1"
+
+    -- Nokta başına ayarlar (noktaya özel ya da rotanın)
+    local pSag = #(), pStf = #(), pTan = #(), pTw = #(), pSpr = #()
+    for o in pts do
+    (
+        append pSag (MT_CableNum (MT_CableVal r o "cSag") "cSag")
+        append pStf (MT_CableNum (MT_CableVal r o "cStiff") "cStiff")
+        append pTan (MT_CableNum (MT_CableVal r o "cTangle") "cTangle")
+        append pTw (MT_CableNum (MT_CableVal r o "cTwist") "cTwist")
+        append pSpr (MT_CableNum (MT_CableVal r o "cSpread") "cSpread")
+    )
+
+    local chordTot = 0.0
+    local bmin = [1e30, 1e30, 1e30], bmax = [-1e30, -1e30, -1e30]
+    for i = 1 to nPts do
+    (
+        local p = pts[i].pos
+        if i > 1 do chordTot += distance p pts[i - 1].pos
+        bmin.x = amin bmin.x p.x; bmin.y = amin bmin.y p.y; bmin.z = amin bmin.z p.z
+        bmax.x = amax bmax.x p.x; bmax.y = amax bmax.y p.y; bmax.z = amax bmax.z p.z
+    )
+    local h = amax (chordTot * 1.5 / 1500.0) cr
+    local mg = chordTot * 0.05 + cr * 40.0
+    -- Zemin ışınları için aday objeler (rotanın çevresindeki görünür geometri, kablolar hariç)
+    local cands = for o in geometry where not o.isHidden and not (MT_CableIsCable o) and o.max.x >= bmin.x - mg and o.min.x <= bmax.x + mg and \
+                  o.max.y >= bmin.y - mg and o.min.y <= bmax.y + mg and o.min.z <= bmax.z + mg collect o
+
+    local ringBase = if nC > 1 then cr / (sin (180.0 / nC)) else 0.0
+    -- Nokta başına demet yarı genişliği (dönüşleri en az bu kadar yumuşatmak için)
+    local pW = #()
+    for i = 1 to nPts do append pW ((amax ringBase ((nC - 1) * cr)) * (amax 0.0 pSpr[i]) / 100.0 + cr)
+
+    MaxTools_Status "Cables  ·  Computing the path..." type:#busy
+    local res = MT_CableCenterline r pts cr cands h pSag pStf pW
+    local cl = res[1], sIdx = res[2], frc = res[3], flz = res[4], gnd = res[5], droop = res[6]
+    local nS = cl.count
+
+    -- Örnek başına ayarlar: karmaşa ve yayılma noktalar arasında yumuşak geçer
+    local tanS = #(), sprS = #()
+    for j = 1 to nS do
+    (
+        local i = sIdx[j]
+        local i2 = amin nPts (i + 1)
+        local f = MT_Smooth01 frc[j]
+        append tanS (pTan[i] + (pTan[i2] - pTan[i]) * f)
+        append sprS (pSpr[i] + (pSpr[i2] - pSpr[i]) * f)
+    )
+
+    -- Rota kendini kesiyorsa sonraki geçiş öncekinin üstüne çıkar
+    local sArr = #(0.0)
+    for j = 2 to nS do append sArr (sArr[j - 1] + distance cl[j] cl[j - 1])
+    local hw = #(), hh = #()
+    for j = 1 to nS do
+    (
+        local spr = (amax 0.0 sprS[j]) / 100.0
+        local amp = (tanS[j] / 100.0) * (cr * 4.0 + ringBase * 1.5)
+        append hw ((amax ringBase ((nC - 1) * cr)) * spr + cr + amp * 0.5)
+        append hh (cr + (1.0 - gnd[j]) * ringBase * spr)
+    )
+    MT_CableLiftCrossings cl sArr hw hh
+
+    -- Yay uzunluğu
+    sArr = #(0.0)
+    for j = 2 to nS do append sArr (sArr[j - 1] + distance cl[j] cl[j - 1])
+    local ltot = sArr[nS]
+    local spanArc = #()
+    for i = 1 to nPts - 1 do append spanArc 0.0
+    for j = 2 to nS do spanArc[sIdx[j]] += sArr[j] - sArr[j - 1]
+
+    -- Yerçekimine göre çerçeve: yan (yatay) ve üst vektörler
+    local sideA = #(), upA = #(), tgA = #()
+    local prevSide = [0, -1, 0]
+    for j = 1 to nS do
+    (
+        local tg = cl[amin nS (j + 1)] - cl[amax 1 (j - 1)]
+        tg = if (length tg) < 1e-9 then [1, 0, 0] else normalize tg
+        local sd = cross tg [0, 0, 1]
+        if (length sd) < 0.15 then
+        (
+            sd = prevSide - tg * (dot prevSide tg)
+            sd = if (length sd) < 1e-6 then [1, 0, 0] else normalize sd
+        )
+        else sd = normalize sd
+        prevSide = sd
+        append sideA sd
+        append upA (cross sd tg)
+        append tgA tg
+    )
+
+    -- Eğrilik: dönüşün iç yönü ve yarıçapı (iç taraftaki kablolar bu yarıçapı aşamaz)
+    local nIn = #(), rCur = #()
+    for j = 1 to nS do
+    (
+        local j0 = amax 1 (j - 2), j1 = amin nS (j + 2)
+        local ds = sArr[j1] - sArr[j0]
+        local kv = if ds > 1e-9 then (tgA[j1] - tgA[j0]) / ds else [0, 0, 0]
+        local kl = length kv
+        append nIn (if kl > 1e-9 then kv / kl else [0, 0, 0])
+        append rCur (if kl > 1e-9 then 1.0 / kl else 1e30)
+    )
+
+    -- Burgu açısı birikir
+    local twA = #()
+    local ang = 0.0
+    for j = 1 to nS do
+    (
+        local i = sIdx[j]
+        if j > 1 and spanArc[i] > 0 do ang += 360.0 * pTw[i] * (sArr[j] - sArr[j - 1]) / spanArc[i]
+        append twA ang
+    )
+
+    local lam = cr * 40.0 * (1.0 + nC * 0.1)
+    local taper = amin (ltot * 0.15) (lam * 0.5)
+    local hOut = amax (cr * 24.0 / det) (ltot / 800.0)
+    -- Uyarlanır yoğunluk: dönüş bu açıyı geçince yeni nokta (keskin dönüşlerde daha sık)
+    local cosTurn = cos (6.0 + 24.0 / det)
+
+    local made = #()
+    for ci = 1 to nC do
+    (
+        seed (seedBase * 7919 + ci * 104729 + r * 31)
+        local phase = 360.0 * (ci - 1) / nC
+        local jr = random 0.8 1.0
+        local ox = random 0.0 500.0, oy = random 0.0 500.0
+        local jd = random 0.0 1.0
+        local flatU = (ci - 1) - (nC - 1) / 2.0
+        local spts = #(), wds = #(), nds = #()
+        local nextS = 0.0
+        local prevTa = MT_CableBandAngle (phase + 90.0)
+        local lastT = tgA[1]
+        for j = 1 to nS do
+        (
+            local g = gnd[j]
+            local spr = sprS[j] / 100.0
+            local th2 = phase + twA[j]
+            -- Havada daire şeklinde demet, yerde yan yana
+            local ur = (cos th2) * ringBase * spr * jr
+            local vr = (sin th2) * ringBase * spr * jr
+            local u = ur + (flatU * cr * 2.0 * spr - ur) * g
+            local v = vr * (1.0 - g)
+            -- Karmaşa: uçlarda sıfır, yerde yana kıvrılır
+            local edge = amin sArr[j] (ltot - sArr[j])
+            local env = if taper > 0 then MT_Smooth01 (edge / taper) else 1.0
+            local amp = (tanS[j] / 100.0) * (cr * 4.0 + ringBase * 1.5) * env
+            if amp > 0 do
+            (
+                local tt = sArr[j] / lam
+                u += amp * (noise3 [tt + ox, oy, 0.37]) * (1.0 + g)
+                v += amp * (noise3 [ox, tt + oy, 1.91]) * (1.0 - g)
+            )
+            -- Her kablo biraz farklı sarksın
+            local dp = droop[sIdx[j]]
+            if dp > 0 do v -= (1.0 - g) * dp * jd * (0.05 + 0.25 * tanS[j] / 100.0) * (sin (180.0 * frc[j]))
+            local ofs = sideA[j] * u + upA[j] * v
+            -- Keskin dönüşte iç taraf: kablo dönüş merkezini geçmesin (geçerse düğüm/patlama olur), içeride sıkışsın
+            local di = dot ofs nIn[j]
+            local lim = rCur[j] * 0.85
+            if di > lim do ofs -= nIn[j] * (di - lim)
+            local q = cl[j] + ofs
+            if flz[j] != undefined and q.z < flz[j] + cr do q.z = flz[j] + cr
+            if j == 1 or j == nS or sArr[j] >= nextS or (dot tgA[j] lastT) < cosTurn do
+            (
+                lastT = tgA[j]
+                -- Bant yönü: demette çembere teğet (bantlar birbirine yaslanır), yerde düz; tek bantta yalnızca burgu
+                local ta = if nC > 1 then MT_CableBandAngle (th2 + 90.0) else twA[j]
+                ta *= 1.0 - g
+                -- 180° eşdeğerlerinden öncekine en yakını (bant aniden ters dönmesin)
+                if nC > 1 do
+                (
+                    while ta - prevTa > 90.0 do ta -= 180.0
+                    while ta - prevTa < -90.0 do ta += 180.0
+                    prevTa = ta
+                )
+                append spts q
+                append wds (sideA[j] * (cos ta) + upA[j] * (sin ta))
+                append nds (upA[j] * (cos ta) - sideA[j] * (sin ta))
+                nextS = sArr[j] + hOut
+            )
+        )
+        local obj = if flat then MT_CableRibbon spts wds nds th (th * 0.15) else MT_CableSpline spts th sides
+        obj.name = "Cable_R" + r as string + "_" + (formattedPrint ci format:"02d")
+        local gv = random 38 70
+        obj.wirecolor = color gv gv (gv + 8)
+        centerPivot obj
+        setUserProp obj "MT_CableRoute" r
+        if toPoly do convertTo obj Editable_Poly
+        append made obj
+        MaxTools_Progress (100.0 * ci / nC)
+    )
+    made
+)
+
+fn MT_CableGenerate =
+(
+    local r = MT_CableRoute()
+    local pts = MT_CablePoints r
+    -- Liste ile sahne tutuyor mu?
+    local listNames = filterString (MT_UI.CableNames()) "\n"
+    local sceneNames = #()
+    for o in pts do append sceneNames o.name
+    local missing = 0, extra = 0
+    for nm in listNames do if (findItem sceneNames nm) == 0 do missing += 1
+    for nm in sceneNames do if (findItem listNames nm) == 0 do extra += 1
+    local go = true
+    if missing + extra > 0 do
+    (
+        MT_CableRefreshUI()
+        go = queryBox ("The point list was out of date:\n" + missing as string + " listed point(s) no longer exist in the scene, " + \
+                       extra as string + " new point(s) were found.\n\nThe list has been refreshed. Generate with the current " + \
+                       pts.count as string + " point(s)?") title:"MaxTools"
+    )
+    if go do
+    (
+        local th = try (units.decodeValue (MT_CableRouteGet r "cThick")) catch undefined
+        if pts.count < 2 then MaxTools_Status "Cables  ·  The route needs at least 2 points." type:#warn
+        else if th == undefined or th <= 0 then MaxTools_Status "Cables  ·  Invalid thickness (examples: 1cm, 8mm, 0.5)." type:#warn
+        else
+        (
+            MaxTools_Status "Cables  ·  Generating..." type:#busy
+            local made = #()
+            undo "Generate Cable" on
+            (
+                local old = for o in objects where (getUserProp o "MT_CableRoute") == r collect o
+                delete old
+                made = MT_CableBuild r pts th
+            )
+            MaxTools_Progress 100
+            redrawViews()
+            MaxTools_Status ("Cables  ·  " + made.count as string + " cable(s) generated along " + pts.count as string + " points (route " + r as string + ").") type:#ok
+        )
+    )
+)
+
+-- =========================================
 -- ARAYÜZ KÖPRÜSÜ (C#)
 -- Arayüz MaxToolsUI.cs içinde, C# olarak çalışır. MAXScript tarafında .NET olay işleyicisi yoktur;
 -- C# butonları MT_UIAction "<id>" komutunu çalıştırır, değerler GetInt / GetText ile okunur.
@@ -2263,6 +3287,20 @@ fn MT_Action id =
             MT_LOD (MT_Num "lodCount") pcts opts (MT_Flag "lodL0") (MT_Flag "lodOff")
         )
         "col": MT_Collision (MT_State "colType") (MT_Num "colDetail") (MT_Num "colGrid") (MT_Flag "colMerge")
+        "cblAdd":      MT_CableAddPoints()
+        "cblRemove":   MT_CableRemove()
+        "cblRefresh":  MT_CableRefreshUI()
+        "cblRoute":    MT_CableRefreshUI()
+        "cblRouteNew": MT_CableNewRoute()
+        "cblRouteDel": MT_CableDeleteRoute()
+        "cblSel":      MT_CableSelect()
+        "cblZoom":     MT_CableZoom()
+        "cblOrder":    MT_CableApplyOrder()
+        "cblSet":      MT_CableSet (MT_UI.CableArg 0) (MT_UI.CableArg 1)
+        "cblClear":    MT_CableClear #(MT_UI.CableArg 0)
+        "cblReset":    MT_CableClear MT_CablePtKeys
+        "cblDefaults": MT_CableResetDefaults()
+        "cblGen":      MT_CableGenerate()
     )
 )
 
@@ -2414,6 +3452,7 @@ fn MT_Build =
 
         local hwnd = try (windows.getMAXHWND()) catch 0
         MT_UI.ShowWith hwnd px py
+        MT_CableRefreshUI()
 
         -- Online güncelleme: açılışta arka planda sessiz kontrol (MaxTools.ini > [Update] AutoCheck=false ile kapatılır)
         MT_UI.ConfigureUpdates MT_UpdateBase MT_ScriptDir MT_BuildNum
@@ -2424,5 +3463,10 @@ fn MT_Build =
 -- Max kapanırken temizlik yap (tekrar çalıştırmada çift kayıt olmasın diye önce kaldır)
 callbacks.removeScripts id:#MaxToolsShutdown
 callbacks.addScript #preSystemShutdown "MT_Shutdown()" id:#MaxToolsShutdown
+-- Sahne değişince kablo listesini yenile (panel kapalıysa bir şey yapmaz)
+callbacks.removeScripts id:#MaxToolsCable
+callbacks.addScript #filePostOpen "MT_CableRefreshUI()" id:#MaxToolsCable
+callbacks.addScript #systemPostReset "MT_CableRefreshUI()" id:#MaxToolsCable
+callbacks.addScript #systemPostNew "MT_CableRefreshUI()" id:#MaxToolsCable
 
 MT_Build()

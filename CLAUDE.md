@@ -40,6 +40,12 @@ yüklediği kurulumdur. Üst klasördeki (`D:\3Ds Max Element Detach\*.ms|*.cs`)
 - Yeni Unwrap'ta seam dizisi boş olabilir → önce `MT_UV_PrimeSeams`. Max 2024'te `quickPeel` YOK → `Unfold3DSolve`/`LSCMSolve`.
 - Auto Unwrap = `FlattenBySmoothingGroup`; çok ada olursa (sculpt) çok yavaş → `MT_CountUVIslands` ile >500 ise sorulur.
 - Gruplar (Drop to Ground): en dıştaki KAPALI grup başı taşınır; açık (Open) grupta üye tek başına (`isOpenGroupHead`).
+- **Cables sayfası (5. sayfa, `MT_Cable*`):** rota noktaları yalnızca `CablePoint_R<rota>_<no>` adlı Dummy'ler; ad değişmez,
+  sıra `MT_CableOrder` user prop'unda. Noktaya özel ayar `MT_C_<anahtar>` user prop; rota ayarları File Properties > Custom
+  `MTCable_R<rota>`. Bir noktadaki ayar sonraki aralığı belirler. Çıktı `Cable_R<rota>_<no>` (+`MT_CableRoute` prop),
+  Generate eskisini silip yeniden üretir. Yuvarlak = renderable spline, Flat = elle kurulan mesh (bant yönü kontrol için).
+  C#↔MAXScript: `CableSetRoutes/CableSetList/CableShow`, değer değişince `cblSet` (`CableArg 0/1`). Panel öne gelince liste yenilenir.
+- C#'ta `HashSet` YOK (Max'in CodeDom'u System.Core eklemiyor) → `List`/`Dictionary` kullan.
 
 ## MAXScript tuzakları (hepsi yaşandı)
 - Büyük/küçük harf duyarsız: `fE`=`fe`, `fN`=`fn`. Anahtar kelime/sınıf adı değişken olmaz (`mapped`, `box`, `path`, `index`, `color`...).

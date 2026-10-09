@@ -49,7 +49,7 @@ $bo = ([regex]::Matches($clean, '\[')).Count; $bc = ([regex]::Matches($clean, '\
 # 4) C# buton kimlikleri <-> MT_Action
 $cs = [System.IO.File]::ReadAllText((Join-Path $root "MaxToolsUI.cs"), [System.Text.Encoding]::UTF8)
 $ids = [regex]::Matches($cs, 'Btn\(c, "[^"]*", \d+, \d+, \d+, \d+, "([^"]+)"') | % { $_.Groups[1].Value } | Sort-Object -Unique
-$ai = $t.IndexOf("fn MT_Action id ="); $ab = $t.Substring($ai, [Math]::Min(4000, $t.Length - $ai))
+$ai = $t.IndexOf("fn MT_Action id ="); $ab = $t.Substring($ai, [Math]::Min(8000, $t.Length - $ai))
 $noAct = $ids | ? { -not $ab.Contains('"' + $_ + '":') }
 "buton/eylem    : $($ids.Count) buton, karsiligi olmayan: $($noAct -join ', ')"; $fail += @($noAct).Count
 

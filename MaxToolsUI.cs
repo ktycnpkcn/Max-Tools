@@ -104,7 +104,17 @@ public class MTForm : Form
         bridgeInfo = sb.ToString();
     }
 
+    // Çalışan bir MAXScript komutu varken (ör. görünümde nokta seçimi) yeni buton komutları yok sayılır
+    static int execDepth;
+
     static void Exec(string cmd)
+    {
+        execDepth++;
+        try { ExecInner(cmd); }
+        finally { execDepth--; }
+    }
+
+    static void ExecInner(string cmd)
     {
         FindBridge();
         if (execMI != null)
@@ -126,15 +136,16 @@ public class MTForm : Form
     // ----- Durum -----
     Panel content, progTrack, progFill, statusDot, indicator;
     Label title, subtitle, statusText;
-    Panel[] pages = new Panel[4];
-    Panel[] navs = new Panel[4];
-    Label[] navIco = new Label[4], navTxt = new Label[4];
+    const int PageCount = 5;
+    Panel[] pages = new Panel[PageCount];
+    Panel[] navs = new Panel[PageCount];
+    Label[] navIco = new Label[PageCount], navTxt = new Label[PageCount];
     int page = 1;
 
     // Duyarlı yerleşim
     Panel root, side, hdr, sb, logo;
     Label lblApp, lblVer, lblMenu, lblFooter, closeBtn, updBtn;
-    readonly List<Panel>[] pageCards = new List<Panel>[] { new List<Panel>(), new List<Panel>(), new List<Panel>(), new List<Panel>() };
+    readonly List<Panel>[] pageCards = MakeCardLists();
     int buildingPage = 1;
     double lastPct;
     bool compact;
@@ -165,9 +176,17 @@ public class MTForm : Form
         new string[] { "Modeling", "Detach, merge and scene tools" },
         new string[] { "UV", "Seams, unwrapping, straightening and packing" },
         new string[] { "Naming", "Engine-ready object names" },
-        new string[] { "LOD & Collision", "Game-ready optimization tools" }
+        new string[] { "LOD & Collision", "Game-ready optimization tools" },
+        new string[] { "Cables", "Route-based cable and tape generator" }
     };
-    static readonly int[] PageIcons = new int[] { 0xE70F, 0xE8A9, 0xE8AC, 0xE7FC };
+    static readonly int[] PageIcons = new int[] { 0xE70F, 0xE8A9, 0xE8AC, 0xE7FC, 0xE71B };
+
+    static List<Panel>[] MakeCardLists()
+    {
+        List<Panel>[] a = new List<Panel>[PageCount];
+        for (int i = 0; i < PageCount; i++) a[i] = new List<Panel>();
+        return a;
+    }
 
     public MTForm()
     {
@@ -244,7 +263,7 @@ public class MTForm : Form
         lblMenu = Lbl(side, "MENU", 24, 80, 100, 16, 7.5f, true, cFaint, ContentAlignment.MiddleLeft, null);
 
         indicator = Pnl(side, 0, 112, 4, 20, cAccent, 2);
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < PageCount; i++)
         {
             int idx = i + 1;
             Panel nav = Pnl(side, 12, 102 + i * 46, 166, 40, cSide, 9);
@@ -293,6 +312,7 @@ public class MTForm : Form
         BuildUVPage();
         BuildNamePage();
         BuildGamePage();
+        BuildCablePage();
 
         // Durum çubuğu
         sb = Pnl(root, 190, 564, 668, 34, cSide, 0);
@@ -303,14 +323,22 @@ public class MTForm : Form
 
         FormClosing += OnFormClosing;
         // Panel arka plana geçince Max kısayollarını geri aç
-        Deactivate += delegate { Exec("enableAccelerators = true"); };
+        Deactivate += delegate
+        {
+            Exec("enableAccelerators = true");
+            CommitEdit();   // viewport'a geçerken yazılan değer onaylansın
+        };
+        // Metin kutusu dışında herhangi bir yere tıklamak yazılan değeri onaylar (Enter gerekmez)
+        HookCommitOnClick(this);
+        // Panele dönünce kablo listesini sahneyle eşitle (silinen / eklenen noktalar)
+        Activated += delegate { if (page == CablePage) CableRefreshLater(); };
         // Açılışta hiçbir metin kutusu odak almasın (yoksa Max kısayolları kapanırdı)
         Shown += delegate { ActiveControl = null; };
         root.Resize += delegate { Relayout(); };
         ResumeLayout();
         Relayout();
 
-        if (startPage < 1 || startPage > 4) startPage = 1;
+        if (startPage < 1 || startPage > PageCount) startPage = 1;
         ShowPage(startPage);
         // İlk açılışta animasyonsuz doğru konum/renk
         indicator.Top = navs[startPage - 1].Top + 10;
@@ -604,7 +632,7 @@ public class MTForm : Form
         logo.Left = compact ? 13 : 20;
         lblApp.Visible = lblVer.Visible = lblMenu.Visible = lblFooter.Visible = !compact;
         lblFooter.Top = H - 38;
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < PageCount; i++)
         {
             int nw = compact ? 36 : 166;
             if (navs[i].Width != nw)
@@ -628,7 +656,7 @@ public class MTForm : Form
         statusText.Width = Math.Max(100, mainW - 50);
 
         content.SetBounds(sideW, 64, mainW, H - 98);
-        for (int p = 0; p < 4; p++) LayoutCards(p);
+        for (int p = 0; p < PageCount; p++) LayoutCards(p);
         ResumeLayout();
     }
 
@@ -809,9 +837,341 @@ public class MTForm : Form
         Btn(c, "Create Collision", 16, 248, 273, 36, "col", true);
     }
 
+    // ================= Kablo sayfası =================
+    const int CablePage = 5;
+    ListBox cblList;
+    Panel cblRouteBox;
+    Label cblGenBtn, cblEditLbl, cblRouteTxt;
+    readonly List<int> cblRouteNums = new List<int>();
+    readonly Dictionary<string, Label> cblDots = new Dictionary<string, Label>();
+    readonly string[] cblArgs = new string[] { "", "" };
+    readonly ToolTip tips = new ToolTip();
+    bool cblFilling;
+
+    class CableItem
+    {
+        public string Name;
+        public bool Ov;
+        public override string ToString() { return Name; }
+    }
+
+    void BuildCablePage()
+    {
+        Panel pg = NewPage(CablePage);
+
+        // --- Rota ve noktalar ---
+        Panel c = Card(pg, 1, "Route", "Cables follow the points in list order", 566);
+        // Rota seçici: kendi çizdiğimiz açılır menü (Max temasında ComboBox beyaz/boş görünüyordu)
+        cblRouteBox = Pnl(c, 16, 62, 137, 28, cInput, 6);
+        cblRouteTxt = Lbl(cblRouteBox, "Route 1", 10, 0, 100, 28, 9f, false, cText, ContentAlignment.MiddleLeft, null);
+        Label arrow = Lbl(cblRouteBox, "▾", 112, 0, 22, 28, 9f, false, cMuted, ContentAlignment.MiddleCenter, null);
+        foreach (Control rc in new Control[] { cblRouteBox, cblRouteTxt, arrow })
+        {
+            rc.Cursor = Cursors.Hand;
+            rc.Click += delegate { ShowRouteMenu(); };
+        }
+        states["cblRoute"] = 1;
+        Btn(c, "New", 159, 62, 62, 28, "cblRouteNew", false);
+        Btn(c, "Delete", 227, 62, 62, 28, "cblRouteDel", false);
+
+        Panel lbg = Pnl(c, 16, 100, 273, 330, cInput, 8);
+        cblList = new ListBox();
+        cblList.BorderStyle = BorderStyle.None;
+        cblList.BackColor = cInput;
+        cblList.ForeColor = cText;
+        cblList.Font = new Font("Segoe UI", 9f);
+        cblList.IntegralHeight = false;
+        cblList.DrawMode = DrawMode.OwnerDrawFixed;
+        cblList.ItemHeight = 24;
+        cblList.SelectionMode = SelectionMode.MultiExtended;
+        cblList.SetBounds(4, 4, 265, 322);
+        cblList.DrawItem += DrawCableItem;
+        cblList.SelectedIndexChanged += delegate
+        {
+            if (cblFilling || execDepth > 0) return;
+            Exec("MT_UIAction \"cblSel\"");
+        };
+        // Boş alana tıklayınca seçim kalkar (ayarlar rota geneline döner)
+        cblList.MouseDown += delegate (object s, MouseEventArgs e)
+        {
+            int i = cblList.IndexFromPoint(e.Location);
+            bool onItem = i >= 0 && i < cblList.Items.Count && cblList.GetItemRectangle(i).Contains(e.Location);
+            if (!onItem && cblList.SelectedIndices.Count > 0) cblList.ClearSelected();
+        };
+        cblList.DoubleClick += delegate { if (execDepth == 0) Exec("MT_UIAction \"cblZoom\""); };
+        cblList.KeyDown += delegate (object s, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Delete && execDepth == 0) { e.Handled = true; Exec("MT_UIAction \"cblRemove\""); }
+        };
+        HookFocus(cblList);
+        lbg.Controls.Add(cblList);
+
+        Btn(c, "Add Points", 16, 440, 132, 34, "cblAdd", true);
+        Btn(c, "Remove", 157, 440, 132, 34, "cblRemove", false);
+        Label up = Btn(c, "▲  Up", 16, 482, 86, 32, null, false);
+        Label dn = Btn(c, "▼  Down", 109, 482, 86, 32, null, false);
+        up.Click += delegate { CableMove(-1); };
+        dn.Click += delegate { CableMove(1); };
+        Btn(c, "Refresh", 203, 482, 86, 32, "cblRefresh", false);
+        Lbl(c, "Add Points: click in a viewport, right-click to finish.\nNew points go after the selected point.",
+            16, 522, 273, 34, 8f, false, cMuted, ContentAlignment.TopLeft, null);
+
+        // --- Şekil (noktaya özel olabilir) ---
+        c = Card(pg, 2, "Shape", "", 330);
+        cblEditLbl = Lbl(c, "", 16, 36, 280, 18, 8.5f, false, cMuted, ContentAlignment.MiddleLeft, null);
+        CableRow(c, 62, "Sag %", "cSag", 10, 0, 100, "Extra cable length over the straight distance. 0 = tight.");
+        CableRow(c, 98, "Stiffness", "cStiff", 30, 0, 100, "Stiff cables make wider bends and sag less.");
+        CableRow(c, 134, "Tangle", "cTangle", 20, 0, 100, "How messy the cables are. Blends smoothly between points.");
+        CableRow(c, 170, "Twist (turns)", "cTwist", 0, 0, 50, "Full turns of the bundle until the next point.");
+        CableRow(c, 206, "Spread %", "cSpread", 100, 0, 400, "Bundle width. 100 = cables touching.");
+        Label sl = Muted(c, "Surface", 16, 242, 60, 30);
+        tips.SetToolTip(sl, "Auto: on the ground if the point sits on a surface. Ground: lies on the surface below. Air: hangs freely.");
+        Segment(c, 80, 242, 187, "cSurf", new string[] { "Auto", "Ground", "Air" }, 1);
+        CableDot(c, 242, "cSurf");
+        Label rp = Btn(c, "Reset Points", 16, 284, 132, 32, "cblReset", false);
+        tips.SetToolTip(rp, "Selected points go back to the route settings.");
+        Label rd = Btn(c, "Reset Defaults", 157, 284, 132, 32, "cblDefaults", false);
+        tips.SetToolTip(rd, "All settings of this route go back to the defaults.");
+
+        // --- Kablo (bütün rota) ---
+        c = Card(pg, 2, "Cable", "Shared by the whole route", 364);
+        Muted(c, "Cable count", 16, 62, 130, 28);
+        Num(c, 157, 62, "cCount", 4, 1, 50, 132);
+        Label tl = Muted(c, "Thickness", 16, 98, 130, 28);
+        tips.SetToolTip(tl, "Cable diameter or tape width. Examples: 1cm, 8mm, 0.5 (scene units).");
+        Txt(c, 157, 98, 132, "cThick").Text = "1cm";
+        Muted(c, "Sides", 16, 134, 130, 28);
+        Num(c, 157, 134, "cSides", 6, 3, 24, 132);
+        Muted(c, "Section", 16, 170, 130, 30);
+        Segment(c, 157, 170, 132, "cSect", new string[] { "Round", "Flat" }, 1);
+        Muted(c, "Seed", 16, 206, 130, 28);
+        Num(c, 157, 206, "cSeed", 1, 1, 9999, 132);
+        Label dl = Muted(c, "Detail", 16, 242, 130, 28);
+        tips.SetToolTip(dl, "Points along the cable. Higher = smoother, heavier.");
+        Num(c, 157, 242, "cDetail", 4, 1, 10, 132);
+        Toggle(c, 16, 276, 273, "cPoly", "Convert to Editable Poly", false);
+        cblGenBtn = Btn(c, "Generate Cables", 16, 312, 273, 36, "cblGen", true);
+        SetBtnEnabled(cblGenBtn, false);
+
+        foreach (string k in new string[] { "cSag", "cStiff", "cTangle", "cTwist", "cSpread", "cSurf",
+                                            "cCount", "cThick", "cSides", "cSect", "cSeed", "cDetail", "cPoly" })
+            notify.Add(k);
+    }
+
+    void CableRow(Panel c, int y, string label, string name, int val, int mn, int mx, string tip)
+    {
+        Label l = Muted(c, label, 16, y, 130, 28);
+        tips.SetToolTip(l, tip);
+        Num(c, 157, y, name, val, mn, mx, 110);
+        CableDot(c, y, name);
+    }
+
+    // Noktaya özel değer işareti: tıklanınca o ayarı seçili noktalardan kaldırır
+    void CableDot(Panel c, int y, string name)
+    {
+        Label d = Lbl(c, "●", 271, y, 20, 28, 9f, false, cAccent, ContentAlignment.MiddleCenter, null);
+        d.Visible = false;
+        d.Cursor = Cursors.Hand;
+        tips.SetToolTip(d, "Overridden on the selected point(s). Click to use the route value.");
+        d.Click += delegate
+        {
+            if (execDepth > 0) return;
+            cblArgs[0] = name;
+            Exec("MT_UIAction \"cblClear\"");
+        };
+        cblDots[name] = d;
+    }
+
+    void DrawCableItem(object sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0 || e.Index >= cblList.Items.Count) return;
+        CableItem it = (CableItem)cblList.Items[e.Index];
+        bool sel = (e.State & DrawItemState.Selected) != 0;
+        using (SolidBrush bg = new SolidBrush(sel ? cNavActive : cInput))
+            e.Graphics.FillRectangle(bg, e.Bounds);
+        if (sel)
+            using (SolidBrush ac = new SolidBrush(cAccent))
+                e.Graphics.FillRectangle(ac, e.Bounds.X, e.Bounds.Y + 4, 3, e.Bounds.Height - 8);
+        TextRenderer.DrawText(e.Graphics, (e.Index + 1).ToString("00"), cblList.Font,
+            new Rectangle(e.Bounds.X + 8, e.Bounds.Y, 26, e.Bounds.Height), cFaint, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        TextRenderer.DrawText(e.Graphics, it.Name, cblList.Font,
+            new Rectangle(e.Bounds.X + 36, e.Bounds.Y, e.Bounds.Width - 56, e.Bounds.Height), sel ? Color.White : cText,
+            TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+        if (it.Ov)
+            TextRenderer.DrawText(e.Graphics, "●", cblList.Font,
+                new Rectangle(e.Bounds.Right - 20, e.Bounds.Y, 16, e.Bounds.Height), cAccent, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
+    }
+
+    // Seçili noktaları listede bir yukarı / aşağı taşır, yeni sırayı MAXScript'e bildirir
+    void CableMove(int dir)
+    {
+        if (execDepth > 0 || cblList.SelectedIndices.Count == 0) return;
+        List<int> idx = new List<int>();
+        foreach (int i in cblList.SelectedIndices) idx.Add(i);
+        idx.Sort();
+        int n = cblList.Items.Count;
+        if ((dir < 0 && idx[0] == 0) || (dir > 0 && idx[idx.Count - 1] == n - 1)) return;
+        List<object> items = new List<object>();
+        foreach (object o in cblList.Items) items.Add(o);
+        if (dir > 0) idx.Reverse();
+        List<int> moved = new List<int>();
+        foreach (int i in idx)
+        {
+            object t = items[i]; items[i] = items[i + dir]; items[i + dir] = t;
+            moved.Add(i + dir);
+        }
+        cblFilling = true;
+        cblList.BeginUpdate();
+        cblList.Items.Clear();
+        foreach (object o in items) cblList.Items.Add(o);
+        foreach (int i in moved) cblList.SetSelected(i, true);
+        cblList.EndUpdate();
+        cblFilling = false;
+        Exec("MT_UIAction \"cblOrder\"");
+    }
+
+    // Panel öne gelince / sayfa açılınca listeyi sahneden yenile (MAXScript çağrısının içinden değil, sonra)
+    void CableRefreshLater()
+    {
+        RunOnUI(delegate { if (execDepth == 0 && !IsDisposed) Exec("MT_UIAction \"cblRefresh\""); });
+    }
+
+    // ----- MAXScript'in kablo sayfası için çağırdıkları -----
+    public string CableArg(int i) { return (i >= 0 && i < cblArgs.Length) ? cblArgs[i] : ""; }
+
+    // csv: "1,2,3,"  cur: seçili rota (csv boşsa yalnızca seçili rota değişir)
+    public void CableSetRoutes(string csv, int cur)
+    {
+        states["cblRoute"] = cur;
+        cblRouteTxt.Text = "Route " + cur;
+        if (string.IsNullOrEmpty(csv)) return;
+        cblRouteNums.Clear();
+        foreach (string s in csv.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            int r;
+            if (int.TryParse(s.Trim(), out r)) cblRouteNums.Add(r);
+        }
+    }
+
+    // Koyu temalı açılır rota menüsü
+    class DarkMenuColors : ProfessionalColorTable
+    {
+        public override Color ToolStripDropDownBackground { get { return cCard; } }
+        public override Color MenuBorder { get { return cBorder; } }
+        public override Color MenuItemBorder { get { return cBtnHover; } }
+        public override Color MenuItemSelected { get { return cBtnHover; } }
+        public override Color ImageMarginGradientBegin { get { return cCard; } }
+        public override Color ImageMarginGradientMiddle { get { return cCard; } }
+        public override Color ImageMarginGradientEnd { get { return cCard; } }
+    }
+
+    void ShowRouteMenu()
+    {
+        if (execDepth > 0) return;
+        CommitEdit();
+        ContextMenuStrip m = new ContextMenuStrip();
+        m.Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors());
+        m.ShowImageMargin = false;
+        m.BackColor = cCard;
+        m.Font = new Font("Segoe UI", 9f);
+        int cur = states["cblRoute"];
+        foreach (int r in cblRouteNums)
+        {
+            int rr = r;
+            ToolStripMenuItem it = new ToolStripMenuItem("Route " + r);
+            it.ForeColor = r == cur ? Color.White : cText;
+            if (r == cur) it.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            it.AutoSize = false;
+            it.Size = new Size(cblRouteBox.Width, 26);
+            it.Click += delegate { SelectRoute(rr); };
+            m.Items.Add(it);
+        }
+        m.Show(cblRouteBox, new Point(0, cblRouteBox.Height + 2));
+    }
+
+    void SelectRoute(int r)
+    {
+        if (execDepth > 0 || states["cblRoute"] == r) return;
+        states["cblRoute"] = r;
+        cblRouteTxt.Text = "Route " + r;
+        cblFilling = true;
+        cblList.ClearSelected();
+        cblFilling = false;
+        Exec("MT_UIAction \"cblRoute\"");
+    }
+
+    // items: satır başına "ad|özelAyarVar(0/1)". Önceki seçim adlarla korunur.
+    public void CableSetList(string items)
+    {
+        List<string> keep = new List<string>();
+        foreach (object o in cblList.SelectedItems) keep.Add(((CableItem)o).Name);
+        int top = cblList.TopIndex;
+        cblFilling = true;
+        cblList.BeginUpdate();
+        cblList.Items.Clear();
+        foreach (string line in items.Split(new char[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] p = line.Split('|');
+            CableItem it = new CableItem();
+            it.Name = p[0];
+            it.Ov = p.Length > 1 && p[1] == "1";
+            cblList.Items.Add(it);
+            if (keep.Contains(it.Name)) cblList.SetSelected(cblList.Items.Count - 1, true);
+        }
+        if (top < cblList.Items.Count) cblList.TopIndex = top;
+        cblList.EndUpdate();
+        cblFilling = false;
+        SetBtnEnabled(cblGenBtn, cblList.Items.Count >= 2);
+    }
+
+    public string CableSelNames()
+    {
+        List<string> l = new List<string>();
+        foreach (object o in cblList.SelectedItems) l.Add(((CableItem)o).Name);
+        return string.Join("\n", l.ToArray());
+    }
+
+    public string CableNames()
+    {
+        List<string> l = new List<string>();
+        foreach (object o in cblList.Items) l.Add(((CableItem)o).Name);
+        return string.Join("\n", l.ToArray());
+    }
+
+    // data: "anahtar=değer=bayrak;..." bayrak 0 rotadan, 1 noktaya özel, 2 seçili noktalarda farklı
+    public void CableShow(string data, string label, bool pointMode)
+    {
+        suppressNotify = true;
+        foreach (string part in data.Split(new char[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] kv = part.Split('=');
+            if (kv.Length < 3) continue;
+            string k = kv[0], v = kv[1];
+            int fl, iv;
+            int.TryParse(kv[2], out fl);
+            TextBox tb;
+            if (texts.TryGetValue(k, out tb))
+            {
+                if (tb.Text != v) tb.Text = v;
+                tb.ForeColor = (pointMode && cblDots.ContainsKey(k) && fl == 0) ? cMuted : cText;
+            }
+            else if (segLabels.ContainsKey(k) && int.TryParse(v, out iv)) SegSelect(k, iv);
+            else if (toggles.ContainsKey(k)) SetToggle(k, v == "1");
+            Label dot;
+            if (cblDots.TryGetValue(k, out dot))
+            {
+                dot.Visible = pointMode && fl > 0;
+                dot.ForeColor = fl == 2 ? cWarn : cAccent;
+            }
+        }
+        cblEditLbl.Text = label;
+        cblEditLbl.ForeColor = pointMode ? cAccentHover : cMuted;
+        suppressNotify = false;
+    }
+
     void ShowPage(int i)
     {
-        for (int k = 1; k <= 4; k++)
+        for (int k = 1; k <= PageCount; k++)
         {
             if (pages[k - 1] != null) pages[k - 1].Visible = (k == i);
             AnimColor(navs[k - 1], k == i ? cNavActive : cSide);
@@ -823,6 +1183,7 @@ public class MTForm : Form
         title.Text = PageInfo[i - 1][0];
         subtitle.Text = PageInfo[i - 1][1];
         AnimTop(indicator, navs[i - 1].Top + 10);
+        if (i == CablePage) CableRefreshLater();
     }
 
     // ================= Kontroller =================
@@ -886,6 +1247,7 @@ public class MTForm : Form
         c.MouseUp += delegate { dragging = false; };
     }
 
+    // action null ise buton yalnızca C# tarafında işlenir (Click ayrıca bağlanır)
     Label Btn(Control par, string txt, int x, int y, int w, int h, string action, bool primary)
     {
         Label b = Lbl(par, txt, x, y, w, h, 9f, primary, primary ? Color.White : cText, ContentAlignment.MiddleCenter, null);
@@ -894,17 +1256,83 @@ public class MTForm : Form
         Color pressC = primary ? cAccentPress : cBtnPress;
         b.BackColor = baseC;
         b.Cursor = Cursors.Hand;
+        b.Tag = primary;
         Round(b, 7);
-        b.MouseEnter += delegate { AnimColor(b, hoverC); };
-        b.MouseLeave += delegate { AnimColor(b, baseC); };
-        b.MouseDown += delegate { colorTo.Remove(b); b.BackColor = pressC; };
-        b.MouseUp += delegate { AnimColor(b, hoverC); };
-        b.Click += delegate
-        {
-            SetProgress(0);
-            Exec("MT_UIAction \"" + action + "\"");
-        };
+        b.MouseEnter += delegate { if (!disabledBtns.Contains(b)) AnimColor(b, hoverC); };
+        b.MouseLeave += delegate { if (!disabledBtns.Contains(b)) AnimColor(b, baseC); };
+        b.MouseDown += delegate { if (!disabledBtns.Contains(b)) { colorTo.Remove(b); b.BackColor = pressC; } };
+        b.MouseUp += delegate { if (!disabledBtns.Contains(b)) AnimColor(b, hoverC); };
+        if (action != null)
+            b.Click += delegate
+            {
+                if (execDepth > 0 || disabledBtns.Contains(b)) return;
+                SetProgress(0);
+                Exec("MT_UIAction \"" + action + "\"");
+            };
         return b;
+    }
+
+    readonly List<Label> disabledBtns = new List<Label>();
+
+    void SetBtnEnabled(Label b, bool en)
+    {
+        bool primary = (b.Tag is bool) && (bool)b.Tag;
+        disabledBtns.Remove(b);
+        if (!en) disabledBtns.Add(b);
+        colorTo.Remove(b);
+        b.BackColor = en ? (primary ? cAccent : cBtn) : cBtnPress;
+        b.ForeColor = en ? (primary ? Color.White : cText) : cFaint;
+        b.Cursor = en ? Cursors.Hand : Cursors.Default;
+    }
+
+    // ----- Değer değişikliği bildirimi (yalnızca notify kümesindeki adlar MAXScript'e gönderilir) -----
+    readonly List<string> notify = new List<string>();
+    bool suppressNotify;
+
+    string ValueOf(string name)
+    {
+        if (limits.ContainsKey(name)) return GetInt(name).ToString();
+        TextBox tb;
+        if (texts.TryGetValue(name, out tb)) return tb.Text.Replace("\"", "").Replace("\\", "").Replace(";", "").Replace("=", "").Trim();
+        int s;
+        return states.TryGetValue(name, out s) ? s.ToString() : "";
+    }
+
+    void ValueChanged(string name)
+    {
+        if (suppressNotify || execDepth > 0 || !notify.Contains(name)) return;
+        cblArgs[0] = name;
+        cblArgs[1] = ValueOf(name);
+        Exec("MT_UIAction \"cblSet\"");
+    }
+
+    // Odaktaki metin kutusundan çıkar (LostFocus -> değer onaylanır)
+    void CommitEdit()
+    {
+        if (ActiveControl is TextBox) ActiveControl = null;
+    }
+
+    // Odak almayan kontroller (etiket, panel, buton) tıklanınca metin kutusunu bırak
+    void HookCommitOnClick(Control root)
+    {
+        foreach (Control c in root.Controls)
+        {
+            if (!(c is TextBox) && !(c is ListBox) && !(c is ComboBox))
+                c.MouseDown += delegate { CommitEdit(); };
+            HookCommitOnClick(c);
+        }
+    }
+
+    // Metin kutusu: odaktan çıkınca ya da Enter'da, değer değiştiyse bildir
+    void HookCommit(TextBox t, string name)
+    {
+        string before = null;
+        t.GotFocus += delegate { before = t.Text; };
+        t.LostFocus += delegate { if (before != null && t.Text != before) { before = null; ValueChanged(name); } };
+        t.KeyDown += delegate (object s, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; ActiveControl = null; }
+        };
     }
 
     TextBox Txt(Control par, int x, int y, int w, string name)
@@ -917,12 +1345,13 @@ public class MTForm : Form
         t.Font = new Font("Segoe UI", 9.5f);
         t.SetBounds(9, 6, w - 18, 18);
         HookFocus(t);
+        HookCommit(t, name);
         bg.Controls.Add(t);
         texts[name] = t;
         return t;
     }
 
-    static void HookFocus(TextBox t)
+    static void HookFocus(Control t)
     {
         t.GotFocus += delegate { Exec("enableAccelerators = false"); };
         t.LostFocus += delegate { Exec("enableAccelerators = true"); };
@@ -942,6 +1371,7 @@ public class MTForm : Form
         t.SetBounds(26, 6, w - 52, 18);
         t.Text = val.ToString();
         HookFocus(t);
+        HookCommit(t, name);
         bg.Controls.Add(t);
         texts[name] = t;
         limits[name] = new int[] { mn, mx };
@@ -956,7 +1386,9 @@ public class MTForm : Form
             {
                 int v = GetInt(name) + dir;
                 v = Math.Max(mn, Math.Min(mx, v));
+                if (t.Text == v.ToString()) return;
                 t.Text = v.ToString();
+                ValueChanged(name);
             };
         }
     }
@@ -1005,12 +1437,19 @@ public class MTForm : Form
             c.Cursor = Cursors.Hand;
             c.Click += delegate
             {
-                bool st = states[name] == 0;
-                states[name] = st ? 1 : 0;
-                AnimLeft(knob, st ? 18 : 2);
-                AnimColor(trk, st ? cAccent : cBtn);
+                SetToggle(name, states[name] == 0);
+                ValueChanged(name);
             };
         }
+    }
+
+    void SetToggle(string name, bool on)
+    {
+        Panel[] tg;
+        if (!toggles.TryGetValue(name, out tg)) return;
+        states[name] = on ? 1 : 0;
+        AnimLeft(tg[1], on ? 18 : 2);
+        AnimColor(tg[0], on ? cAccent : cBtn);
     }
 
     void Segment(Control par, int x, int y, int w, string name, string[] labels, int sel)
@@ -1028,7 +1467,12 @@ public class MTForm : Form
             Round(s, 6);
             s.MouseEnter += delegate { if (states[name] != idx) AnimColor(s, cBtn); };
             s.MouseLeave += delegate { if (states[name] != idx) AnimColor(s, cInput); };
-            s.Click += delegate { SegSelect(name, idx); };
+            s.Click += delegate
+            {
+                if (states[name] == idx) return;
+                SegSelect(name, idx);
+                ValueChanged(name);
+            };
             list.Add(s);
         }
         segLabels[name] = list;
@@ -1037,8 +1481,9 @@ public class MTForm : Form
 
     void SegSelect(string name, int idx)
     {
-        states[name] = idx;
         List<Label> list = segLabels[name];
+        if (idx < 1 || idx > list.Count) return;
+        states[name] = idx;
         for (int i = 0; i < list.Count; i++)
         {
             bool on = (i + 1) == idx;
