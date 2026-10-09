@@ -1,7 +1,7 @@
 {
-  "version": "3.9",
-  "build": 26,
-  "notes": "Online updates: MaxTools now checks for new versions when the panel opens (or with the update button in the header).",
+  "version": "3.9.1",
+  "build": 27,
+  "notes": "Test update: no functional changes. Used to verify the automatic update flow.",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",

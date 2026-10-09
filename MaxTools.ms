@@ -4,9 +4,9 @@
 -- =========================================
 
 global MT_UI, MT_UIAsm, MT_UIAsmStamp
-global MT_Version = "v3.9  ·  build 26"
+global MT_Version = "v3.9.1  ·  build 27"
 -- Online güncelleme: GitHub'daki version.json'daki build bu sayıdan büyükse güncelleme önerilir
-global MT_BuildNum = 26
+global MT_BuildNum = 27
 global MT_UpdateBase = "https://raw.githubusercontent.com/ktycnpkcn/Max-Tools/main/"
 global MT_OnUIEvent
 global MT_UFind
