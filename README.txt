@@ -1,4 +1,4 @@
-﻿MAX TOOLS  v3.8
+﻿MAX TOOLS  v3.9
 Fast modeling, UV and game-ready tools for Autodesk 3ds Max 2024+
 ===================================================================
 
@@ -22,7 +22,13 @@ Hotkey:
 
 UPDATING
 --------
-Replace the files in this folder with the new versions. No reinstall is needed:
+MaxTools updates itself: when the panel opens it checks GitHub
+(https://github.com/ktycnpkcn/Max-Tools) for a newer version and asks before
+installing it. You can also click the update button (circular arrows) in the
+panel header. Previous files are kept in "_update_backup".
+To turn off the automatic check: <plugcfg>\MaxTools.ini -> [Update] AutoCheck=false
+
+Manual update: replace the files in this folder with the new versions. No reinstall is needed:
    - MaxTools.ms           -> picked up the next time the panel is opened
    - MaxToolsUI.cs         -> recompiled automatically the next time the panel is opened
    - MaxToolsPacker.cs     -> recompiled automatically on the next Pack

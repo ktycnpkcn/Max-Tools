@@ -1,7 +1,7 @@
 {
-  "version": "3.8",
-  "build": 25,
-  "notes": "Drop to Ground (groups as one object, open groups respected), resizable responsive panel, C# interface.",
+  "version": "3.9",
+  "build": 26,
+  "notes": "Online updates: MaxTools now checks for new versions when the panel opens (or with the update button in the header).",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",

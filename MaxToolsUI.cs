@@ -7,7 +7,10 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.IO;
+using System.Net;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 #if MAXFORM
@@ -130,7 +133,7 @@ public class MTForm : Form
 
     // Duyarlı yerleşim
     Panel root, side, hdr, sb, logo;
-    Label lblApp, lblVer, lblMenu, lblFooter, closeBtn;
+    Label lblApp, lblVer, lblMenu, lblFooter, closeBtn, updBtn;
     readonly List<Panel>[] pageCards = new List<Panel>[] { new List<Panel>(), new List<Panel>(), new List<Panel>(), new List<Panel>() };
     int buildingPage = 1;
     double lastPct;
@@ -273,6 +276,17 @@ public class MTForm : Form
         cl.Click += delegate { Close(); };
         closeBtn = cl;
 
+        // Güncelleme kontrolü butonu (kapatmanın solunda)
+        Label up = Lbl(hdr, char.ConvertFromUtf32(0xE895), 582, 14, 34, 30, 10f, false, cMuted, ContentAlignment.MiddleCenter, "Segoe MDL2 Assets");
+        up.BackColor = cBg;
+        up.Cursor = Cursors.Hand;
+        Round(up, 7);
+        up.MouseEnter += delegate { AnimColor(up, cBtn); up.ForeColor = cText; };
+        up.MouseLeave += delegate { AnimColor(up, cBg); up.ForeColor = cMuted; };
+        up.Click += delegate { CheckForUpdates(false); };
+        new ToolTip().SetToolTip(up, "Check for updates");
+        updBtn = up;
+
         // İçerik
         content = Pnl(root, 190, 64, 668, 500, cBg, 0);
         BuildModelPage();
@@ -389,6 +403,179 @@ public class MTForm : Form
     // MAXScript köprüsü bulundu mu (statik metot yerine örnek üzerinden çağrılabilsin diye)
     public bool BridgeOK() { return HasBridge(); }
 
+    // ================= Online güncelleme =================
+    // GitHub'daki version.json okunur; daha yeni build varsa kullanıcıya sorulur, dosyalar indirilip yerine konur.
+    string updBase, updDir;
+    int updBuild;
+    bool updBusy;
+    public static bool TestAutoYes;   // yalnızca test: onay pencerelerini atla
+
+    public void ConfigureUpdates(string baseUrl, string installDir, int currentBuild)
+    {
+        updBase = baseUrl;
+        updDir = installDir;
+        updBuild = currentBuild;
+    }
+
+    static string Fetch(string url)
+    {
+        ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;   // TLS 1.2
+        using (WebClient wc = new WebClient())
+        {
+            wc.Headers[HttpRequestHeader.CacheControl] = "no-cache";
+            wc.Encoding = System.Text.Encoding.UTF8;
+            return wc.DownloadString(url + "?t=" + DateTime.UtcNow.Ticks);
+        }
+    }
+
+    static byte[] FetchBytes(string url)
+    {
+        ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+        using (WebClient wc = new WebClient())
+        {
+            wc.Headers[HttpRequestHeader.CacheControl] = "no-cache";
+            return wc.DownloadData(url + "?t=" + DateTime.UtcNow.Ticks);
+        }
+    }
+
+    // silent: açılıştaki otomatik kontrol (güncelse ya da internet yoksa sessiz kalır)
+    public void CheckForUpdates(bool silent)
+    {
+        if (string.IsNullOrEmpty(updBase) || updBusy) return;
+        updBusy = true;
+        if (!silent) SetStatus("Checking for updates...", 4);
+        System.Threading.Thread th = new System.Threading.Thread(delegate ()
+        {
+            string json = null, err = null;
+            try { json = Fetch(updBase + "version.json"); }
+            catch (Exception ex) { err = ex.Message; }
+            RunOnUI(delegate { OnCheckDone(json, err, silent); });
+        });
+        th.IsBackground = true;
+        th.Start();
+    }
+
+    void RunOnUI(MethodInvoker m)
+    {
+        try { if (IsHandleCreated && !IsDisposed) BeginInvoke(m); } catch { }
+    }
+
+    void OnCheckDone(string json, string err, bool silent)
+    {
+        updBusy = false;
+        if (IsDisposed) return;
+        if (json == null)
+        {
+            if (!silent) SetStatus("Update check failed: " + err, 2);
+            return;
+        }
+        Match mb = Regex.Match(json, "\"build\"\\s*:\\s*(\\d+)");
+        Match mv = Regex.Match(json, "\"version\"\\s*:\\s*\"([^\"]*)\"");
+        Match mn = Regex.Match(json, "\"notes\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+        Match mf = Regex.Match(json, "\"files\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
+        if (!mb.Success || !mf.Success)
+        {
+            if (!silent) SetStatus("Update check failed: invalid version.json", 2);
+            return;
+        }
+        int build = int.Parse(mb.Groups[1].Value);
+        string ver = mv.Success ? mv.Groups[1].Value : build.ToString();
+        string notes = mn.Success ? Regex.Unescape(mn.Groups[1].Value) : string.Empty;
+        if (build <= updBuild)
+        {
+            if (!silent) SetStatus("MaxTools is up to date (v" + ver + ", build " + build + ").", 1);
+            return;
+        }
+        List<string> files = new List<string>();
+        foreach (Match m in Regex.Matches(mf.Groups[1].Value, "\"([^\"]+)\""))
+        {
+            string f = m.Groups[1].Value.Replace('/', '\\');
+            if (f.Contains("..") || Path.IsPathRooted(f)) continue;   // güvenlik: yalnızca kurulum klasörünün içine
+            files.Add(f);
+        }
+        DialogResult dr = TestAutoYes ? DialogResult.Yes : MessageBox.Show(this,
+            "MaxTools v" + ver + " (build " + build + ") is available.\n\n" +
+            (notes.Length > 0 ? notes + "\n\n" : string.Empty) + "Update now?",
+            "MaxTools Update", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+        if (dr == DialogResult.Yes) StartUpdate(files, ver, build);
+        else SetStatus("Update v" + ver + " available (use the update button to install).", 0);
+    }
+
+    void StartUpdate(List<string> files, string ver, int build)
+    {
+        updBusy = true;
+        SetStatus("Downloading MaxTools v" + ver + "...", 4);
+        string stage = Path.Combine(updDir, "_update");
+        System.Threading.Thread th = new System.Threading.Thread(delegate ()
+        {
+            string err = null;
+            try
+            {
+                if (Directory.Exists(stage)) Directory.Delete(stage, true);
+                foreach (string f in files)
+                {
+                    byte[] data = FetchBytes(updBase + f.Replace('\\', '/'));
+                    if (data == null || data.Length == 0) throw new Exception("empty file: " + f);
+                    string dst = Path.Combine(stage, f);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dst));
+                    File.WriteAllBytes(dst, data);
+                }
+            }
+            catch (Exception ex) { err = ex.Message; }
+            RunOnUI(delegate { ApplyUpdate(files, stage, ver, build, err); });
+        });
+        th.IsBackground = true;
+        th.Start();
+    }
+
+    // İndirilen dosyaları yedek alarak yerine koyar; hata olursa yedeği geri yükler
+    void ApplyUpdate(List<string> files, string stage, string ver, int build, string err)
+    {
+        updBusy = false;
+        if (err != null)
+        {
+            SetStatus("Update failed (download): " + err, 3);
+            return;
+        }
+        string backup = Path.Combine(updDir, "_update_backup");
+        List<string> done = new List<string>();
+        try
+        {
+            if (Directory.Exists(backup)) Directory.Delete(backup, true);
+            foreach (string f in files)
+            {
+                string cur = Path.Combine(updDir, f);
+                string bak = Path.Combine(backup, f);
+                if (File.Exists(cur))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(bak));
+                    File.Copy(cur, bak, true);
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(cur));
+                File.Copy(Path.Combine(stage, f), cur, true);
+                done.Add(f);
+            }
+            try { Directory.Delete(stage, true); } catch { }
+        }
+        catch (Exception ex)
+        {
+            // Geri al
+            foreach (string f in done)
+            {
+                string bak = Path.Combine(backup, f);
+                try { if (File.Exists(bak)) File.Copy(bak, Path.Combine(updDir, f), true); } catch { }
+            }
+            SetStatus("Update failed (install): " + ex.Message + " - previous version restored.", 3);
+            return;
+        }
+        updBuild = build;
+        SetStatus("Updated to v" + ver + " (build " + build + ").", 1);
+        if (!TestAutoYes)
+            MessageBox.Show(this, "MaxTools was updated to v" + ver + " (build " + build + ").\nThe panel will now reopen.",
+                "MaxTools Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        RunOnUI(delegate { Exec("MT_ReloadAfterUpdate()"); });
+    }
+
     // ================= Sayfalar =================
     Panel NewPage(int idx)
     {
@@ -432,7 +619,8 @@ public class MTForm : Form
         int mainW = W - sideW;
         hdr.SetBounds(sideW, 0, mainW, 64);
         closeBtn.Left = mainW - 48;
-        title.Width = subtitle.Width = Math.Max(100, mainW - 80);
+        updBtn.Left = mainW - 86;
+        title.Width = subtitle.Width = Math.Max(100, mainW - 120);
 
         sb.SetBounds(sideW, H - 34, mainW, 34);
         progTrack.Width = mainW;

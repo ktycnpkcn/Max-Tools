@@ -4,7 +4,10 @@
 -- =========================================
 
 global MT_UI, MT_UIAsm, MT_UIAsmStamp
-global MT_Version = "v3.8  ·  build 25"
+global MT_Version = "v3.9  ·  build 26"
+-- Online güncelleme: GitHub'daki version.json'daki build bu sayıdan büyükse güncelleme önerilir
+global MT_BuildNum = 26
+global MT_UpdateBase = "https://raw.githubusercontent.com/ktycnpkcn/Max-Tools/main/"
 global MT_OnUIEvent
 global MT_UFind
 global MT_UVMapCache
@@ -2361,6 +2364,14 @@ fn MT_GetUIAsm =
     )
 )
 
+-- Güncelleme bittikten sonra C# bunu çağırır: yeni MaxTools.ms'yi yükler (eski paneli kendisi kapatır)
+fn MT_ReloadAfterUpdate =
+(
+    local f = MT_ScriptDir + "MaxTools.ms"
+    if doesFileExist f do fileIn f
+    OK
+)
+
 -- Max kapanmadan hemen önce: pencereyi kapat ve .NET referanslarını bırak
 fn MT_Shutdown =
 (
@@ -2403,6 +2414,10 @@ fn MT_Build =
 
         local hwnd = try (windows.getMAXHWND()) catch 0
         MT_UI.ShowWith hwnd px py
+
+        -- Online güncelleme: açılışta arka planda sessiz kontrol (MaxTools.ini > [Update] AutoCheck=false ile kapatılır)
+        MT_UI.ConfigureUpdates MT_UpdateBase MT_ScriptDir MT_BuildNum
+        if (getINISetting ini "Update" "AutoCheck") != "false" do MT_UI.CheckForUpdates true
     )
 )
 
