@@ -1,0 +1,23 @@
+{
+  "version": "3.8",
+  "build": 25,
+  "notes": "Drop to Ground (groups as one object, open groups respected), resizable responsive panel, C# interface.",
+  "files": [
+    "MaxTools.ms",
+    "MaxToolsUI.cs",
+    "MaxToolsPacker.cs",
+    "MaxTools_SideBar.ms",
+    "MaxTools_Install.ms",
+    "README.txt",
+    "icons/MaxTools_16a.bmp",
+    "icons/MaxTools_16i.bmp",
+    "icons/MaxTools_24a.bmp",
+    "icons/MaxTools_24i.bmp",
+    "icons/MaxTools_bar_24i.bmp",
+    "icons/MaxTools_bar_24m.bmp",
+    "icons/MaxTools/MaxTools_16.png",
+    "icons/MaxTools/MaxTools_24.png",
+    "icons/MaxTools/MaxTools_32.png",
+    "icons/MaxTools/MaxTools_48.png"
+  ]
+}
