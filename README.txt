@@ -20,6 +20,23 @@ Add the icon to a toolbar:
 Hotkey:
    Customize > Hotkey Editor > search "MaxTools".
 
+UPGRADING FROM AN OLDER VERSION (v3.8 or earlier, one time only)
+-----------------------------------------------------------------
+Versions before 3.9 cannot update themselves, so this one upgrade is manual:
+1. Get the new files: https://github.com/ktycnpkcn/Max-Tools
+   -> green "Code" button -> "Download ZIP", then extract it.
+2. Close the MaxTools panel in 3ds Max (3ds Max itself can stay open).
+3. Copy ALL extracted files into your EXISTING MaxTools folder
+   (the one you installed from) and choose "Replace the files in the destination".
+4. Reopen MaxTools from the menu / toolbar / side bar.
+   The header should show "v3.9  ·  build 26". No reinstall is needed.
+5. Restart 3ds Max once so the side bar also loads the new version.
+From now on updates arrive automatically.
+
+If you would rather use a NEW folder: put the extracted files there, run
+MaxTools_Install.ms from the new folder (it re-links 3ds Max to it), then
+delete the old folder.
+
 UPDATING
 --------
 MaxTools updates itself: when the panel opens it checks GitHub
