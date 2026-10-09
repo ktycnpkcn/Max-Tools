@@ -1,12 +1,12 @@
 ﻿-- =========================================
--- MaxTools v4.0
+-- MaxTools v4.1
 -- Hızlı modelleme araçları paketi
 -- =========================================
 
 global MT_UI, MT_UIAsm, MT_UIAsmStamp
-global MT_Version = "v4.0  ·  build 28"
+global MT_Version = "v4.1  ·  build 29"
 -- Online güncelleme: GitHub'daki version.json'daki build bu sayıdan büyükse güncelleme önerilir
-global MT_BuildNum = 28
+global MT_BuildNum = 29
 global MT_UpdateBase = "https://raw.githubusercontent.com/ktycnpkcn/Max-Tools/main/"
 global MT_OnUIEvent
 global MT_UFind
@@ -342,6 +342,103 @@ fn MT_DropToGround mode =
         local msg = "Ground  ·  " + moved as string + " object(s)/group(s) dropped" + (if mode == 2 then " onto surfaces below" else " to Z=0")
         if skipped > 0 do msg += ", " + skipped as string + " skipped" + (if mode == 2 then " (nothing below)" else "")
         MaxTools_Status (msg + ".") type:(if moved == 0 then #warn else #ok)
+    )
+)
+
+-- =========================================
+-- ARAÇLAR: RESET XFORM (grup içindekiler dahil)
+-- Max'in Reset XForm'u grup üyelerinde kapalı; üyelik geçici kaldırılıp geri verilir.
+-- Instance'lar önce unique yapılır, aynalı objelerin normalleri düzeltilir, çocuklar yerinde kalır.
+-- =========================================
+fn MT_IsXFormTarget o =
+(
+    local cs = (classOf o) as string
+    not (isGroupHead o) and (superClassOf o == GeometryClass or superClassOf o == Shape) and \
+    cs != "TargetObject" and cs != "BoneGeometry" and not (matchPattern cs pattern:"Biped*") and \
+    (superClassOf o == Shape or canConvertTo o Editable_Mesh)
+)
+
+fn MT_NodeDepth o =
+(
+    local d = 0, p = o.parent
+    while p != undefined do (d += 1; p = p.parent)
+    d
+)
+
+fn MT_CmpDepth a b = (if a[1] < b[1] then -1 else if a[1] > b[1] then 1 else 0)
+
+-- Dönüşü ve ölçeği zaten sıfır mı
+fn MT_IsCleanTM tm =
+    (distance tm.row1 [1, 0, 0]) < 1e-4 and (distance tm.row2 [0, 1, 0]) < 1e-4 and (distance tm.row3 [0, 0, 1]) < 1e-4
+
+fn MT_ChildTMs o =
+(
+    local res = #()
+    for c in o.children do append res #(c, c.transform)
+    res
+)
+
+fn MT_RestoreTMs items = (for it in items do it[1].transform = it[2])
+
+-- scope: 1 seçim, 2 tüm sahne
+fn MT_ResetXForms scope inGroups doCollapse =
+(
+    local src = if scope == 2 then (objects as array) else (selection as array)
+    local items = #()
+    for o in src where (MT_IsXFormTarget o) and (inGroups or not (isGroupMember o)) do append items #(MT_NodeDepth o, o)
+    qsort items MT_CmpDepth   -- önce ebeveynler
+
+    local go = items.count > 0
+    if not go then
+        MaxTools_Status ("Reset XForm  ·  " + (if scope == 2 then "No geometry or shapes in the scene." else "Please select objects or groups.")) type:#warn
+    else if scope == 2 do
+        go = queryBox ("Reset XForm on " + items.count as string + " object(s) in the whole scene?") title:"MaxTools"
+
+    if go do
+    (
+        local done = 0, clean = 0, inGrp = 0, uniq = 0, kept = 0, mirr = 0
+        undo "Reset XForm" on
+        (
+            for k = 1 to items.count do
+            (
+                local o = items[k][2]
+                if MT_IsCleanTM o.transform then clean += 1
+                else
+                (
+                    -- Instance'a modifier eklemek diğer kopyaları da bozar: önce unique
+                    local inst = #()
+                    InstanceMgr.GetInstances o &inst
+                    if inst.count > 1 do (InstanceMgr.MakeObjectsUnique #(o) #individual; uniq += 1)
+
+                    local tm = o.transform
+                    local mirrored = superClassOf o == GeometryClass and (dot (cross tm.row1 tm.row2) tm.row3) < 0
+                    local hadMods = o.modifiers.count > 0
+                    local kids = MT_ChildTMs o
+                    local wasMember = isGroupMember o
+                    if wasMember do setGroupMember o false
+                    ResetXForm o
+                    if mirrored do (addModifier o (Normalmodifier flip:true); mirr += 1)
+                    if wasMember do (setGroupMember o true; inGrp += 1)
+                    MT_RestoreTMs kids
+                    if doCollapse and not hadMods then collapseStack o
+                    else if hadMods do kept += 1
+                    done += 1
+                )
+                if (mod k 20) == 0 do
+                (
+                    MaxTools_Progress (100.0 * k / items.count)
+                    MaxTools_Status ("Reset XForm  ·  " + k as string + " / " + items.count as string) type:#busy
+                )
+            )
+        )
+        MaxTools_Progress 100
+        local msg = "Reset XForm  ·  " + done as string + " object(s) reset"
+        if inGrp > 0 do msg += " (" + inGrp as string + " inside groups)"
+        if clean > 0 do msg += ", " + clean as string + " already clean"
+        if uniq > 0 do msg += ", " + uniq as string + " instance(s) made unique"
+        if mirr > 0 do msg += ", " + mirr as string + " mirrored (normals fixed)"
+        if kept > 0 do msg += ", " + kept as string + " kept XForm on top of their modifiers"
+        MaxTools_Status (msg + ".") type:(if done > 0 then #ok else #info)
     )
 )
 
@@ -3265,6 +3362,7 @@ fn MT_Action id =
         "attach":    MT_Attach()
         "ref":       MT_Ref()
         "drop":      MT_DropToGround (MT_State "dropMode")
+        "rxReset":   MT_ResetXForms (MT_State "rxScope") (MT_Flag "rxGroups") (MT_Flag "rxCollapse")
         "uvAll":     MT_UVRandomAll()
         "uvSel":     MT_UVRandomSel()
         "seamAdd":   MT_UV_SeamAdd()

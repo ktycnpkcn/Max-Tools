@@ -724,6 +724,12 @@ public class MTForm : Form
         Btn(c, "All Elements", 16, 62, 132, 36, "uvAll", false);
         Btn(c, "Selected Elements", 157, 62, 132, 36, "uvSel", false);
 
+        c = Card(pg, 1, "Reset XForm", "Also works on objects inside groups", 212);
+        Segment(c, 16, 62, 273, "rxScope", new string[] { "Selection", "Whole Scene" }, 1);
+        Toggle(c, 16, 100, 273, "rxGroups", "Include objects inside groups", true);
+        Toggle(c, 16, 128, 273, "rxCollapse", "Collapse (if no other modifiers)", true);
+        Btn(c, "Reset XForm", 16, 162, 273, 36, "rxReset", true);
+
         c = Card(pg, 2, "Quick Merge", "Group or merge into one object", 158);
         Btn(c, "Auto Group", 16, 62, 273, 36, "group", false);
         Btn(c, "Attach + Center Pivot", 16, 106, 273, 36, "attach", false);

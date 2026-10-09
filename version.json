@@ -1,7 +1,7 @@
 {
-  "version": "4.0",
-  "build": 28,
-  "notes": "New Cables page: generate cable bundles and flat tapes along routes of dummy points (sag, stiffness, tangle, twist, spread, per-point overrides).",
+  "version": "4.1",
+  "build": 29,
+  "notes": "New Reset XForm tool (Modeling page): works on the selection or the whole scene, including objects inside groups.",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",

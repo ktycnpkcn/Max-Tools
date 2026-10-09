@@ -1,4 +1,4 @@
-MAX TOOLS  v4.0
+MAX TOOLS  v4.1
 Fast modeling, UV and game-ready tools for Autodesk 3ds Max 2024+
 ===================================================================
 
@@ -75,6 +75,8 @@ Modeling
    Quick Merge            Auto group, or attach everything into one object
    Reference Image        Textured plane with the image's aspect ratio
    Drop to Ground         Puts objects or whole groups on Z=0 or on the surface below
+   Reset XForm            Selection or whole scene, also objects inside groups; fixes mirrored
+                          normals, makes instances unique, keeps other modifiers
 
 UV  (works on an Unwrap UVW modifier)
    Seams                  Mark / remove / clear seams, unwrap from seams
