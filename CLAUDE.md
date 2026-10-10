@@ -68,6 +68,10 @@ yüklediği kurulumdur. Üst klasördeki (`D:\3Ds Max Element Detach\*.ms|*.cs`)
 - `copy #()` / `copy #{}` → `OK` döndürdü; düz `#()` kullan. `format` içinde `%%` güvenilmez.
 - Dosyalar **UTF-8 BOM** ile kaydedilmeli (`[IO.File]::WriteAllText(p, t, (New-Object System.Text.UTF8Encoding $true))`).
 - PowerShell'de kısa fonksiyon adları alias'la çakışır (`R` = Invoke-History).
+- Dosyalar git checkout sonrası **CRLF** olabilir: PowerShell `.Replace`/regex'te "`n" kalıbı yerine `\r?\n` kullan;
+  sürüm gibi "·" içeren metinleri PowerShell betiğiyle değiştirme (karakter bozuluyor, değişiklik sessizce uygulanmıyor),
+  Edit aracını kullan.
+- `where` anahtar kelime, değişken adı olmaz.
 
 ## Doğrulama (her değişiklikten sonra)
 1. `powershell -File dev\check.ps1` → ileri referans, tanımsız MT_ fonksiyonu, büyük/küçük çakışma, anahtar kelime,

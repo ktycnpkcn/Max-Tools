@@ -457,6 +457,15 @@ public class MTForm : Form
 
     public bool Alive() { return !IsDisposed; }
 
+    // MAXScript'in metnini değiştirebildiği etiketler (ör. Make Instances kaynağı)
+    readonly Dictionary<string, Label> namedLabels = new Dictionary<string, Label>();
+
+    public void SetLabelText(string key, string text)
+    {
+        Label l;
+        if (namedLabels.TryGetValue(key, out l)) l.Text = text;
+    }
+
     // MAXScript köprüsü bulundu mu (statik metot yerine örnek üzerinden çağrılabilsin diye)
     public bool BridgeOK() { return HasBridge(); }
 
@@ -835,6 +844,81 @@ public class MTForm : Form
         return s;
     }
 
+    // ----- Pivot seçici: 3x3 üstten görünüm (X/Y) + yükseklik (Z) ikonları -----
+    readonly List<Panel> pvCells = new List<Panel>();
+    readonly List<Panel> pvZCells = new List<Panel>();
+    static readonly string[] PvX = { "Left", "Center", "Right" };
+    static readonly string[] PvY = { "Back", "Center", "Front" };
+    static readonly string[] PvZ = { "Top", "Middle", "Bottom" };
+
+    void PivotPicker(Panel c, int x, int y)
+    {
+        const int cs = 30, gap = 4;
+        states["pvXY"] = 5;   // orta
+        states["pvZ"] = 3;    // alt
+        // Arka plan: objenin üstten görünüşü gibi ince bir çerçeve
+        for (int i = 0; i < 9; i++)
+        {
+            int idx = i + 1;
+            Panel cell = Pnl(c, x + (i % 3) * (cs + gap), y + (i / 3) * (cs + gap), cs, cs, cInput, 6);
+            cell.Cursor = Cursors.Hand;
+            cell.Paint += delegate (object o, PaintEventArgs e)
+            {
+                bool on = states["pvXY"] == idx;
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                int r = on ? 6 : 3;
+                using (SolidBrush b = new SolidBrush(on ? cAccent : cFaint))
+                    e.Graphics.FillEllipse(b, cs / 2 - r, cs / 2 - r, r * 2, r * 2);
+                if (on)
+                    using (Pen pen = new Pen(cAccentHover, 1.5f))
+                        e.Graphics.DrawEllipse(pen, cs / 2 - 10, cs / 2 - 10, 20, 20);
+            };
+            cell.MouseEnter += delegate { if (states["pvXY"] != idx) cell.BackColor = cBtn; };
+            cell.MouseLeave += delegate { cell.BackColor = cInput; };
+            cell.Click += delegate { states["pvXY"] = idx; PivotRefresh(); };
+            pvCells.Add(cell);
+        }
+        Muted(c, "Top view", x, y + 3 * (cs + gap), 3 * cs + 2 * gap, 20).TextAlign = ContentAlignment.MiddleCenter;
+
+        // Yükseklik: kutu ikonu, seçili yükseklikte vurgulu çizgi
+        int zx = x + 3 * (cs + gap) + 14;
+        for (int i = 0; i < 3; i++)
+        {
+            int idx = i + 1;
+            Panel cell = Pnl(c, zx, y + i * (cs + gap), cs, cs, cInput, 6);
+            cell.Cursor = Cursors.Hand;
+            cell.Paint += delegate (object o, PaintEventArgs e)
+            {
+                bool on = states["pvZ"] == idx;
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                Rectangle box = new Rectangle(9, 6, 12, 18);
+                using (Pen pen = new Pen(on ? cText : cFaint, 1f))
+                    e.Graphics.DrawRectangle(pen, box);
+                int ly = idx == 1 ? box.Top : idx == 2 ? box.Top + box.Height / 2 : box.Bottom;
+                using (Pen pen = new Pen(on ? cAccent : cMuted, on ? 3f : 2f))
+                    e.Graphics.DrawLine(pen, box.Left - 4, ly, box.Right + 4, ly);
+            };
+            cell.MouseEnter += delegate { if (states["pvZ"] != idx) cell.BackColor = cBtn; };
+            cell.MouseLeave += delegate { cell.BackColor = cInput; };
+            cell.Click += delegate { states["pvZ"] = idx; PivotRefresh(); };
+            pvZCells.Add(cell);
+        }
+        Muted(c, "Height", zx - 8, y + 3 * (cs + gap), cs + 16, 20).TextAlign = ContentAlignment.MiddleCenter;
+
+        // Seçimin özeti
+        int sx = zx + cs + 16;
+        namedLabels["pvSum"] = Lbl(c, "", sx, y, 289 - sx, 3 * cs + 2 * gap, 8.5f, false, cText, ContentAlignment.MiddleLeft, null);
+        PivotRefresh();
+    }
+
+    void PivotRefresh()
+    {
+        int xy = states["pvXY"] - 1, z = states["pvZ"] - 1;
+        namedLabels["pvSum"].Text = "X:  " + PvX[xy % 3] + "\nY:  " + PvY[xy / 3] + "\nZ:  " + PvZ[z];
+        foreach (Panel p in pvCells) p.Invalidate();
+        foreach (Panel p in pvZCells) p.Invalidate();
+    }
+
     // ----- Sol menüde bölüm kısayolları -----
     // Aktif sayfanın altında o sayfanın bölümleri listelenir; tıklayınca sayfa o bölüme kayar.
     readonly List<Panel>[] pageSections = MakePanelLists();
@@ -946,9 +1030,27 @@ public class MTForm : Form
         Btn(c, "Open Recursively", 157, 106, 132, 36, "grpOpenR", false);
         Btn(c, "Close", 16, 150, 273, 36, "grpClose", false);
 
-        // Dönüşüm ve konum (ileride pivot araçları da buraya)
+        // Instance araçları
+        Section(pg, "Instances");
+        c = Card(pg, 1, "Make Instances", "Replace objects or lights with instances of a source", 228);
+        Panel srcBox = Pnl(c, 16, 62, 273, 30, cInput, 7);
+        namedLabels["instSrc"] = Lbl(srcBox, "Source:  none (select one object, Pick Source)", 10, 0, 255, 30, 8.5f, false, cText,
+            ContentAlignment.MiddleLeft, null);
+        Btn(c, "Pick Source", 16, 100, 132, 36, "instSrc", false);
+        Btn(c, "Select Instances", 157, 100, 132, 36, "instSel", false);
+        Toggle(c, 16, 144, 273, "instMat", "Also copy material", true);
+        Btn(c, "Make Instances", 16, 176, 273, 36, "instMake", true);
+
+        // Dönüşüm ve konum
         Section(pg, "Transform");
-        c = Card(pg, 1, "Reset XForm", "Also works on objects inside groups", 212);
+        c = Card(pg, 1, "Pivot", "Move the pivot to a side of the object", 316);
+        PivotPicker(c, 16, 62);
+        Segment(c, 16, 192, 273, "pvSpace", new string[] { "Local (object's own axes)", "World" }, 1);
+        Toggle(c, 16, 228, 273, "pvGroups", "Affect objects inside groups", false);
+        Btn(c, "Set Pivot", 16, 264, 132, 36, "pvSet", true);
+        Btn(c, "Pivot to World 0", 157, 264, 132, 36, "pvWorld", false);
+
+        c = Card(pg, 2, "Reset XForm", "Also works on objects inside groups", 212);
         Segment(c, 16, 62, 273, "rxScope", new string[] { "Selection", "Whole Scene" }, 1);
         Toggle(c, 16, 100, 273, "rxGroups", "Include objects inside groups", true);
         Toggle(c, 16, 128, 273, "rxCollapse", "Collapse (if no other modifiers)", true);

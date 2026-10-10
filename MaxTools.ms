@@ -4,9 +4,9 @@
 -- =========================================
 
 global MT_UI, MT_UIAsm, MT_UIAsmStamp
-global MT_Version = "v4.3  ·  build 32"
+global MT_Version = "v4.4  ·  build 33"
 -- Online güncelleme: GitHub'daki version.json'daki build bu sayıdan büyükse güncelleme önerilir
-global MT_BuildNum = 32
+global MT_BuildNum = 33
 global MT_UpdateBase = "https://raw.githubusercontent.com/ktycnpkcn/Max-Tools/main/"
 global MT_OnUIEvent
 global MT_UFind
@@ -576,6 +576,179 @@ fn MT_ApplyUVWMap mapType size =
         local msg = "UVW Map  ·  " + typeName + " " + size as string + " applied to " + geos.count as string + " object(s)"
         if updated > 0 do msg += " (" + updated as string + " existing UVW Map updated)"
         MaxTools_Status (msg + ".") type:#ok
+    )
+)
+
+-- =========================================
+-- ARAÇLAR: PIVOT (sınır kutusuna göre konumlandırma)
+-- Dünya eksenli sınır kutusu kullanılır ("alt" her zaman yere en yakın taraf). Gruplar bir bütün sayılır;
+-- inGroups açıksa grup içindeki her obje (ve alt grup) kendi kutusuna göre ayrıca ayarlanır.
+-- =========================================
+-- Grup başının altındaki tüm üyeler (iç içe gruplar dahil)
+fn MT_GroupDescendants head =
+(
+    local res = #()
+    local stack = #(head)
+    while stack.count > 0 do
+    (
+        local n = stack[stack.count]
+        deleteItem stack stack.count
+        for ch in n.children where isGroupMember ch do (append res ch; append stack ch)
+    )
+    res
+)
+
+-- p: #(x, y, z) her biri -1 min, 0 orta, 1 max. worldZero: pivotu dünya merkezine al.
+-- localSpace: kutu objenin kendi eksenlerinde (döndürülmüş objenin kendi hatları); değilse dünya eksenli kutu.
+fn MT_PivotTarget n p worldZero localSpace =
+(
+    if worldZero then [0, 0, 0]
+    else
+    (
+        local tm = if localSpace then n.transform else (matrix3 1)
+        local mn = undefined, mx = undefined
+        if isGroupHead n then
+        (
+            -- Grup başının kendi kutusu güvenilir değil: üyelerin ortak kutusu
+            for m in (MT_GroupDescendants n) where not (isGroupHead m) do
+            (
+                local bb = nodeGetBoundingBox m tm
+                if mn == undefined then (mn = bb[1]; mx = bb[2])
+                else
+                (
+                    mn.x = amin mn.x bb[1].x; mn.y = amin mn.y bb[1].y; mn.z = amin mn.z bb[1].z
+                    mx.x = amax mx.x bb[2].x; mx.y = amax mx.y bb[2].y; mx.z = amax mx.z bb[2].z
+                )
+            )
+        )
+        if mn == undefined do
+        (
+            local bb = nodeGetBoundingBox n tm
+            mn = bb[1]; mx = bb[2]
+        )
+        local c = (mn + mx) / 2.0
+        local q = [(if p[1] < 0 then mn.x else if p[1] > 0 then mx.x else c.x), \
+                   (if p[2] < 0 then mn.y else if p[2] > 0 then mx.y else c.y), \
+                   (if p[3] < 0 then mn.z else if p[3] > 0 then mx.z else c.z)]
+        q * tm
+    )
+)
+
+-- xy: 1..9 (üstten bakış, satır satır: arka-sol ... ön-sağ), z: 1 üst, 2 orta, 3 alt
+fn MT_SetPivots xy z inGroups worldZero localSpace =
+(
+    local units = #()
+    for o in selection do appendIfUnique units (MT_GroupRoot o)
+    units = for u in units where not (MT_HasAncestorIn u units) collect u
+    if units.count == 0 then MaxTools_Status "Pivot  ·  Please select objects or groups." type:#warn
+    else
+    (
+        local col = mod (xy - 1) 3, row = (xy - 1) / 3
+        local p = #((col as integer) - 1, 1 - row, (#(1, 0, -1))[z])
+        local nObj = 0, nGrp = 0, nInner = 0
+        undo "Set Pivot" on
+        (
+            for u in units do
+            (
+                -- Önce grup içindekiler, grup başı en son
+                if isGroupHead u and inGroups do
+                    for m in (MT_GroupDescendants u) do (m.pivot = MT_PivotTarget m p worldZero localSpace; nInner += 1)
+                u.pivot = MT_PivotTarget u p worldZero localSpace
+                if isGroupHead u then nGrp += 1 else nObj += 1
+            )
+        )
+        -- Move gizmo'su eski pivotta kalıyordu: seçimi tazele ve tamamen yeniden çiz
+        local sel = selection as array
+        clearSelection()
+        select sel
+        completeRedraw()
+        local posTxt = if worldZero then "world origin" else \
+            ((#("Left", "Center", "Right"))[(col as integer) + 1] + " / " + (#("Back", "Center", "Front"))[row + 1] + " / " + (#("Top", "Middle", "Bottom"))[z] + \
+             (if localSpace then " (local)" else " (world)"))
+        local msg = "Pivot  ·  " + posTxt + ": " + nObj as string + " object(s), " + nGrp as string + " group(s)"
+        if nInner > 0 do msg += ", " + nInner as string + " object(s) inside groups"
+        MaxTools_Status (msg + ".") type:#ok
+    )
+)
+
+-- =========================================
+-- ARAÇLAR: INSTANCE (kaynak objeyle değiştir)
+-- Hedeflerin objesi kaynağın instance'ı olur (modifier'lar dahil); konum/dönüş/ölçek korunur. Işıklarda da çalışır.
+-- =========================================
+global MT_InstSource
+
+fn MT_InstShowSource =
+(
+    if MT_UIAlive() do
+    (
+        local txt = if MT_InstSource != undefined and isValidNode MT_InstSource then ("Source:  " + MT_InstSource.name) \
+                    else "Source:  none (select one object, Pick Source)"
+        try (MT_UI.SetLabelText "instSrc" txt) catch()
+    )
+)
+
+fn MT_InstPickSource =
+(
+    if selection.count != 1 then MaxTools_Status "Instances  ·  Select exactly one object as the source." type:#warn
+    else
+    (
+        MT_InstSource = selection[1]
+        MT_InstShowSource()
+        MaxTools_Status ("Instances  ·  Source: " + MT_InstSource.name + ". Now select the objects to replace and press Make Instances.") type:#ok
+    )
+)
+
+fn MT_MakeInstances copyMat =
+(
+    local src = MT_InstSource
+    if src == undefined or not (isValidNode src) then
+    (
+        MT_InstSource = undefined
+        MT_InstShowSource()
+        MaxTools_Status "Instances  ·  Pick a source object first." type:#warn
+    )
+    else
+    (
+        local targets = for o in selection where o != src and not (isGroupHead o) collect o
+        if targets.count == 0 then MaxTools_Status "Instances  ·  Select the objects to replace (the source may stay selected)." type:#warn
+        else
+        (
+            local done = 0, skipped = 0, already = 0
+            undo "Make Instances" on
+            (
+                for t in targets do
+                (
+                    if superClassOf t != superClassOf src then skipped += 1
+                    else if areNodesInstances t src then already += 1
+                    else
+                    (
+                        instanceReplace t src
+                        -- Kaynağın materyali yoksa hedefinkine dokunma (yanlışlıkla silinmesin)
+                        if copyMat and src.material != undefined do t.material = src.material
+                        done += 1
+                    )
+                )
+            )
+            redrawViews()
+            local msg = "Instances  ·  " + done as string + " object(s) are now instances of " + src.name
+            if already > 0 do msg += ", " + already as string + " already were"
+            if skipped > 0 do msg += ", " + skipped as string + " skipped (different type, e.g. light vs. geometry)"
+            MaxTools_Status (msg + ".") type:(if done > 0 then #ok else #warn)
+        )
+    )
+)
+
+-- Seçili objenin (yoksa kaynağın) tüm instance'larını seçer
+fn MT_SelectInstances =
+(
+    local src = if selection.count > 0 then selection[1] else MT_InstSource
+    if src == undefined or not (isValidNode src) then MaxTools_Status "Instances  ·  Select an object first." type:#warn
+    else
+    (
+        local inst = #()
+        InstanceMgr.GetInstances src &inst
+        select inst
+        MaxTools_Status ("Instances  ·  " + inst.count as string + " instance(s) of " + src.name + " selected.") type:#ok
     )
 )
 
@@ -3727,6 +3900,11 @@ fn MT_Action id =
         "drop":      MT_DropToGround (MT_State "dropMode")
         "rxReset":   MT_ResetXForms (MT_State "rxScope") (MT_Flag "rxGroups") (MT_Flag "rxCollapse")
         "uvwApply":  MT_ApplyUVWMap (MT_State "uvwType") (if (MT_State "uvwSize") == 4 then (MT_Num "uvwCustom") else (#(100, 200, 300))[MT_State "uvwSize"])
+        "pvSet":     MT_SetPivots (MT_State "pvXY") (MT_State "pvZ") (MT_Flag "pvGroups") false ((MT_State "pvSpace") == 1)
+        "pvWorld":   MT_SetPivots (MT_State "pvXY") (MT_State "pvZ") (MT_Flag "pvGroups") true false
+        "instSrc":   MT_InstPickSource()
+        "instMake":  MT_MakeInstances (MT_Flag "instMat")
+        "instSel":   MT_SelectInstances()
         "mtidRand":  MT_RandomMatIDs (MT_State "mtidMode") (MT_Num "mtidMax")
         "wcRand":    MT_RandomWirecolor (MT_State "wcScope") (MT_Flag "wcGroup")
         "uvAll":     MT_UVRandomAll()
@@ -3897,6 +4075,7 @@ fn MT_Build =
         local hwnd = try (windows.getMAXHWND()) catch 0
         MT_UI.ShowWith hwnd px py
         MT_CableRefreshUI()
+        MT_InstShowSource()
 
         -- Online güncelleme: açılışta arka planda sessiz kontrol (MaxTools.ini > [Update] AutoCheck=false ile kapatılır)
         MT_UI.ConfigureUpdates MT_UpdateBase MT_ScriptDir MT_BuildNum

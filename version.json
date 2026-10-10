@@ -1,7 +1,7 @@
 {
-  "version": "4.3",
-  "build": 32,
-  "notes": "Modeling page in sections with shortcuts in the left menu. New: Group tools (Ungroup, Open, Open Recursively, Close), spline attach / detach, UVW Map presets, Random Material ID, Random Wirecolor. Fix: page no longer jumps when clicking a button.",
+  "version": "4.4",
+  "build": 33,
+  "notes": "New: Make Instances (turn objects or lights into instances of a source) and Pivot tool (any side / corner / center, local or world axes, groups or objects inside).",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",

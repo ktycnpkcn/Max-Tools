@@ -1,4 +1,4 @@
-MAX TOOLS  v4.3
+MAX TOOLS  v4.4
 Fast modeling, UV and game-ready tools for Autodesk 3ds Max 2024+
 ===================================================================
 
@@ -80,7 +80,13 @@ Modeling  (sections; jump to a section from the left menu)
                           detach / attach splines
  Group
    Group                  Group (new group is selected), Ungroup, Open, Open Recursively, Close
+ Instances
+   Make Instances         Pick a source, then turn selected objects or lights into instances of it
+                          (modifiers included, transforms kept); Select Instances
  Transform
+   Pivot                  Move the pivot to any side / corner / center of the object (3x3 top view +
+                          height), local or world axes, groups as a whole or every object inside;
+                          Pivot to World 0
    Reset XForm            Selection or whole scene, also objects inside groups; fixes mirrored
                           normals, makes instances unique, keeps other modifiers
    Drop to Ground         Puts objects or whole groups on Z=0 or on the surface below
