@@ -47,6 +47,7 @@ public class MTForm : Form
     // 1) ManagedServices.MaxscriptSDK.ExecuteMaxscriptCommand (yüklü değilse adıyla / Max klasöründen yüklenir)
     // 2) Bulunamazsa yedek: UIEvent olayı (MAXScript tek bir işleyiciyle PendingCmd'yi çalıştırır)
     static MethodInfo execMI;
+    static object[] execExtra = new object[0];   // komuttan sonraki ek parametreler (Max 2026+)
     static string bridgeInfo = string.Empty;
     static string maxRoot;
     public static List<string> TestLog = new List<string>();
@@ -93,6 +94,29 @@ public class MTForm : Form
             else
             {
                 execMI = t.GetMethod("ExecuteMaxscriptCommand", new Type[] { typeof(string) });
+                // 3ds Max 2026: ExecuteMaxscriptCommand(string, ScriptSource) -> ek parametreler varsayılanla doldurulur
+                if (execMI == null)
+                {
+                    foreach (MethodInfo mi in t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                    {
+                        if (mi.Name != "ExecuteMaxscriptCommand") continue;
+                        ParameterInfo[] ps = mi.GetParameters();
+                        if (ps.Length < 2 || ps[0].ParameterType != typeof(string)) continue;
+                        object[] extra = new object[ps.Length - 1];
+                        for (int i = 1; i < ps.Length; i++)
+                        {
+                            Type pt = ps[i].ParameterType;
+                            if (ps[i].IsOptional) extra[i - 1] = ps[i].DefaultValue;
+                            else if (pt.IsEnum) extra[i - 1] = Enum.ToObject(pt, 0);   // ScriptSource.NotSpecified
+                            else if (pt.IsValueType) extra[i - 1] = Activator.CreateInstance(pt);
+                            else extra[i - 1] = null;
+                        }
+                        execMI = mi;
+                        execExtra = extra;
+                        sb.Append("bridge OK (" + ps.Length + " parameters); ");
+                        break;
+                    }
+                }
                 if (execMI == null)
                 {
                     sb.Append("method not found; available: ");
@@ -119,7 +143,10 @@ public class MTForm : Form
         FindBridge();
         if (execMI != null)
         {
-            try { execMI.Invoke(null, new object[] { cmd }); return; }
+            object[] args = new object[1 + execExtra.Length];
+            args[0] = cmd;
+            Array.Copy(execExtra, 0, args, 1, execExtra.Length);
+            try { execMI.Invoke(null, args); return; }
             catch (Exception ex) { TestLog.Add("EXEC ERROR: " + ex.Message); }
         }
         // Yedek yol: MAXScript'teki tek olay işleyicisine bildir

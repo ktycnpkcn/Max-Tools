@@ -1,7 +1,7 @@
 {
-  "version": "4.2",
-  "build": 30,
-  "notes": "3ds Max 2025 / 2026 support (.NET 8 compiler, new menu system), fixed text overflow on scaled displays (125% / 150%), new MaxTools_Uninstall.ms.",
+  "version": "4.2.1",
+  "build": 31,
+  "notes": "Fixes: correct version label in the panel, faster and safer MAXScript connection in 3ds Max 2026.",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",

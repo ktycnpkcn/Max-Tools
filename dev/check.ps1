@@ -63,6 +63,10 @@ foreach ($pair in @(@("MaxToolsUI.cs", @("System.dll", "System.Drawing.dll", "Sy
   if ($cr.Errors.HasErrors) { "$($pair[0]) : HATA " + (($cr.Errors | % { $_.ToString() }) -join '; '); $fail++ } else { "$($pair[0]) : derlendi" }
 }
 
+# 5b) Sürüm etiketi ile build numarası aynı mı (MT_Version "... build N" == MT_BuildNum)
+$vm = [regex]::Match($t, 'global MT_Version = "[^"]*build (\d+)"'); $bm = [regex]::Match($t, 'global MT_BuildNum = (\d+)')
+if (-not $vm.Success -or -not $bm.Success -or $vm.Groups[1].Value -ne $bm.Groups[1].Value) { "SURUM UYUSMAZ  : MT_Version build $($vm.Groups[1].Value) / MT_BuildNum $($bm.Groups[1].Value)"; $fail++ } else { "surum          : build $($bm.Groups[1].Value)" }
+
 # 6) BOM
 foreach ($f in "MaxTools.ms", "MaxTools_SideBar.ms", "MaxTools_Install.ms", "MaxTools_Uninstall.ms") {   # .cs dosyalarini .NET zaten UTF-8 okur
   $b = [System.IO.File]::ReadAllBytes((Join-Path $root $f))
