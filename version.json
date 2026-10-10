@@ -1,7 +1,7 @@
 {
-  "version": "4.5",
-  "build": 34,
-  "notes": "New Tiles page: parquet and tiles on any flat surface (whole rooms in one object, openings left out) with Grid, Brick, Planks, Herringbone and Basket patterns. Fix: decimal sizes like 1.5cm were read wrong on some Windows languages (Cables thickness, UVW Map).",
+  "version": "4.6",
+  "build": 35,
+  "notes": "Live update: Tiles, Cables, UVW Map, LOD and Collision update while you change settings; moving a cable point regenerates its route. Number fields: drag the arrows up / down. Group Attach / Detach. LOD and Collision now replace their previous result.",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",

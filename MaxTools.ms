@@ -4,15 +4,19 @@
 -- =========================================
 
 global MT_UI, MT_UIAsm, MT_UIAsmStamp
-global MT_Version = "v4.5  ·  build 34"
+global MT_Version = "v4.6  ·  build 35"
 -- Online güncelleme: GitHub'daki version.json'daki build bu sayıdan büyükse güncelleme önerilir
-global MT_BuildNum = 34
+global MT_BuildNum = 35
 global MT_UpdateBase = "https://raw.githubusercontent.com/ktycnpkcn/Max-Tools/main/"
 global MT_OnUIEvent
 global MT_UFind
 global MT_UVMapCache
 global MT_ShellPositions, MT_ScalePts, MT_RotatePts, MT_Pts2D, MT_InflateRects, MT_PickPts, MT_FlipY
 global MT_PackerObj, MT_PackerStamp
+-- Panelden canlı güncelleme ("<id>Live" eylemleri): true iken onay pencereleri açılmaz
+global MT_LiveRun = false
+global MT_TlLastSrcs   -- Tiles: en son kaplanan kaynaklar (canlı güncellemede seçim boşsa)
+global MT_CableWatch   -- kablo noktası izleme (liste yenilemeden önce tanımlı değil: ileri referans)
 
 -- Teşhis notları scriptin yanındaki MaxTools_diag.txt dosyasına yazılır
 global MT_ScriptDir = try (getFilenamePath (getThisScriptFilename())) catch (getDir #temp + "\\")
@@ -492,6 +496,30 @@ fn MT_Ungroup =
             select kids
         )
         MaxTools_Status ("Group  ·  " + heads.count as string + " group(s) ungrouped, " + kids.count as string + " object(s) selected.") type:#ok
+    )
+)
+
+-- Attach / Detach: Max'in kendi Group > Attach / Detach komutları (aynı davranış)
+fn MT_GroupAttach =
+(
+    if selection.count == 0 then MaxTools_Status "Group  ·  Select the objects to add, then pick a group." type:#warn
+    else
+    (
+        MaxTools_Status "Group  ·  Click the group to attach to in a viewport (right-click to cancel)." type:#busy
+        max group attach
+    )
+)
+
+fn MT_GroupDetach =
+(
+    local n = (for o in selection where isGroupMember o collect o).count
+    if n == 0 then MaxTools_Status "Group  ·  Open the group and select the objects to detach." type:#warn
+    else
+    (
+        max group detach
+        local left = (for o in selection where isGroupMember o collect o).count
+        MaxTools_Status ("Group  ·  " + (n - left) as string + " object(s) detached" + \
+                         (if left > 0 then " (open the group first to detach its objects)." else ".")) type:(if left < n then #ok else #warn)
     )
 )
 
@@ -2458,9 +2486,34 @@ fn MT_MakeLOD src pct newName opts =
     c
 )
 
+-- Bir kaynağa bağlı sonuç objeleri (LOD / collision): prop = kaynak handle
+fn MT_Linked prop h = (for s in objects where (getUserProp s prop) == h collect s)
+
+-- Seçimdeki sonuç objelerini (prop ile bağlı) kaynağına çevirir; diğerlerinde filtre uygulanır
+fn MT_SourcesOf prop filterFn =
+(
+    local res = #()
+    for o in selection do
+    (
+        local h = getUserProp o prop
+        if h != undefined then
+        (
+            local sn = maxOps.getNodeByHandle h
+            if sn != undefined and isValidNode sn do appendIfUnique res sn
+        )
+        else if filterFn o do appendIfUnique res o
+    )
+    res
+)
+
+fn MT_IsGeo o = superClassOf o == GeometryClass and not (isGroupHead o)
+
 fn MT_LOD cnt pcts opts renameLOD0 offset =
 (
-    local srcs = for o in selection where superClassOf o == GeometryClass collect o
+    -- LOD kopyası seçiliyse kaynağına dön; önceki LOD'lar silinip yeniden üretilir (çoğalmaz)
+    local srcs = MT_SourcesOf "MT_LODSrc" MT_IsGeo
+    -- Canlı güncelleme yalnızca LOD'u olan objeleri günceller
+    if MT_LiveRun do srcs = for sn in srcs where (MT_Linked "MT_LODSrc" sn.inode.handle).count > 0 collect sn
     if srcs.count == 0 then MaxTools_Status "LOD  ·  Please select geometry." type:#warn
     else
     (
@@ -2473,6 +2526,7 @@ fn MT_LOD cnt pcts opts renameLOD0 offset =
         (
             for src in srcs do
             (
+                delete (MT_Linked "MT_LODSrc" src.inode.handle)
                 local baseName = src.name
                 if matchPattern baseName pattern:"*_LOD0" do baseName = substring baseName 1 (baseName.count - 5)
                 if renameLOD0 do src.name = baseName + "_LOD0"
@@ -2486,6 +2540,7 @@ fn MT_LOD cnt pcts opts renameLOD0 offset =
                     windows.processPostedMessages()
 
                     local c = MT_MakeLOD src pcts[i] (baseName + "_LOD" + i as string) opts
+                    setUserProp c "MT_LODSrc" src.inode.handle
                     if offset do move c [w * 1.25 * i, 0, 0]
                     append created c
                     report += " › " + (MT_TriCount c) as string
@@ -2509,6 +2564,8 @@ fn MT_IsColName n =
 (
     matchPattern n pattern:"UCX_*" or matchPattern n pattern:"UBX_*" or matchPattern n pattern:"USP_*"
 )
+
+fn MT_IsColSource o = (MT_IsGeo o) and not (MT_IsColName o.name)
 
 fn MT_ColName prefix src =
 (
@@ -2811,7 +2868,10 @@ fn MT_MakeParts src maxLines =
 -- colType: 1 convex, 2 parçalı, 3 box, 4 sphere
 fn MT_Collision colType detail grid mergeParts =
 (
-    local srcs = for o in selection where superClassOf o == GeometryClass and not (MT_IsColName o.name) collect o
+    -- Collision seçiliyse kaynağına dön; önceki collision'lar silinip yeniden üretilir (çoğalmaz)
+    local srcs = MT_SourcesOf "MT_ColSrc" MT_IsColSource
+    -- Canlı güncelleme yalnızca collision'ı olan objeleri günceller
+    if MT_LiveRun do srcs = for sn in srcs where (MT_Linked "MT_ColSrc" sn.inode.handle).count > 0 collect sn
     if srcs.count == 0 then MaxTools_Status "Collision  ·  Please select geometry." type:#warn
     else
     (
@@ -2825,6 +2885,7 @@ fn MT_Collision colType detail grid mergeParts =
         (
             for src in srcs do
             (
+                delete (MT_Linked "MT_ColSrc" src.inode.handle)
                 local parts = case colType of
                 (
                     1: #(MT_MakeConvex src detail)
@@ -2848,6 +2909,7 @@ fn MT_Collision colType detail grid mergeParts =
                     for c in parts do
                     (
                         c.name = MT_ColName prefix src
+                        setUserProp c "MT_ColSrc" src.inode.handle
                         c.wirecolor = color 255 110 0
                         c.renderable = false
                         c.xray = true
@@ -3106,6 +3168,7 @@ fn MT_CableRefreshUI =
         for o in (MT_CablePoints r) do items += o.name + "|" + (if MT_CableHasOv o then "1" else "0") + "\n"
         MT_UI.CableSetList items
         MT_CableShowSettings()
+        try (MT_CableWatch()) catch()
     )
     OK
 )
@@ -3847,22 +3910,24 @@ fn MT_CableBuild r pts th =
     made
 )
 
-fn MT_CableGenerate =
+fn MT_CableGenerateRun r =
 (
-    local r = MT_CableRoute()
     local pts = MT_CablePoints r
-    -- Liste ile sahne tutuyor mu?
-    local listNames = filterString (MT_UI.CableNames()) "\n"
-    local sceneNames = #()
-    for o in pts do append sceneNames o.name
+    -- Liste ile sahne tutuyor mu? (yalnızca panelde gösterilen rota için)
     local missing = 0, extra = 0
-    for nm in listNames do if (findItem sceneNames nm) == 0 do missing += 1
-    for nm in sceneNames do if (findItem listNames nm) == 0 do extra += 1
+    if MT_UIAlive() and r == MT_CableRoute() do
+    (
+        local listNames = filterString (MT_UI.CableNames()) "\n"
+        local sceneNames = #()
+        for o in pts do append sceneNames o.name
+        for nm in listNames do if (findItem sceneNames nm) == 0 do missing += 1
+        for nm in sceneNames do if (findItem listNames nm) == 0 do extra += 1
+    )
     local go = true
     if missing + extra > 0 do
     (
         MT_CableRefreshUI()
-        go = queryBox ("The point list was out of date:\n" + missing as string + " listed point(s) no longer exist in the scene, " + \
+        go = MT_LiveRun or queryBox ("The point list was out of date:\n" + missing as string + " listed point(s) no longer exist in the scene, " + \
                        extra as string + " new point(s) were found.\n\nThe list has been refreshed. Generate with the current " + \
                        pts.count as string + " point(s)?") title:"MaxTools"
     )
@@ -3886,6 +3951,46 @@ fn MT_CableGenerate =
             MaxTools_Status ("Cables  ·  " + made.count as string + " cable(s) generated along " + pts.count as string + " points (route " + r as string + ").") type:#ok
         )
     )
+)
+
+-- Canlı güncelleme yalnızca kablosu zaten üretilmiş rotayı günceller (ilk üretim Generate Cables ile)
+fn MT_CableGenerate =
+(
+    if MT_LiveRun and (MT_Linked "MT_CableRoute" (MT_CableRoute())).count == 0 then
+        MaxTools_Status "Cables  ·  Live update: press Generate Cables first." type:#info
+    else MT_CableGenerateRun (MT_CableRoute())
+)
+
+-- ----- Nokta taşınınca canlı güncelleme -----
+-- Kablo noktalarına transform change handler bağlanır; taşınan noktanın rotası "kirli" işaretlenir,
+-- panel fare bırakılınca (C# zamanlayıcı) "cblMovedLive" gönderir ve kirli rotalar bir kez yeniden üretilir.
+global MT_CableDirty = #()
+
+fn MT_CableMoved obj =
+(
+    local pr = if isValidNode obj then MT_CableParse obj.name else undefined
+    if pr != undefined and MT_UIAlive() do
+    (
+        appendIfUnique MT_CableDirty pr[1]
+        try (MT_UI.CablePointMoved()) catch()
+    )
+)
+
+-- Sahnedeki tüm kablo noktalarını izle (liste her yenilendiğinde yeniden bağlanır)
+fn MT_CableWatch =
+(
+    deleteAllChangeHandlers id:#MTCablePts
+    local pts = for o in helpers where MT_CableIsPoint o collect o
+    if pts.count > 0 do
+        when transform pts changes id:#MTCablePts handleAt:#redrawViews obj do MT_CableMoved obj
+)
+
+-- Taşınan noktaların rotaları (kablosu zaten üretilmişse) yeniden üretilir
+fn MT_CableRegenMoved =
+(
+    local rs = MT_CableDirty
+    MT_CableDirty = #()
+    for r in rs where (MT_Linked "MT_CableRoute" r).count > 0 do MT_CableGenerateRun r
 )
 
 -- =========================================
@@ -4384,6 +4489,11 @@ fn MT_TileGenerate o =
         )
         else if (superClassOf s == GeometryClass or superClassOf s == Shape) and not (isGroupHead s) do appendIfUnique srcs s
     )
+    -- Canlı güncellemede seçim boşsa en son kaplanan yüzey(ler)
+    if srcs.count == 0 and MT_LiveRun and MT_TlLastSrcs != undefined do
+        srcs = for sn in MT_TlLastSrcs where isValidNode sn collect sn
+    -- Canlı güncelleme yalnızca zaten kaplanmış yüzeyleri günceller (yeni kaplama Generate ile)
+    if MT_LiveRun do srcs = for sn in srcs where (MT_TlOldResults sn.inode.handle).count > 0 collect sn
     -- Scale %: uzunluk ve genişlik birlikte (oran korunur); derz / bevel / kalınlık ölçeklenmez
     local scl = (amax 1 o[24]) / 100.0
     local len = (MT_TlDecode o[2] 0) * scl
@@ -4393,7 +4503,9 @@ fn MT_TileGenerate o =
     local hgt = MT_TlDecode o[6] 0
     local offU = MT_TlDecode o[7] 0
     local offV = MT_TlDecode o[8] 0
-    if srcs.count == 0 then MaxTools_Status "Tiles  ·  Select planes, walls, floors or closed splines." type:#warn
+    if srcs.count == 0 and MT_LiveRun then
+        MaxTools_Status "Tiles  ·  Live update: select generated tiles (or press Generate Tiles first)." type:#info
+    else if srcs.count == 0 then MaxTools_Status "Tiles  ·  Select planes, walls, floors or closed splines." type:#warn
     else if len <= 0 or wid <= 0 or hgt <= 0 then MaxTools_Status "Tiles  ·  Length, width and height must be greater than 0 (e.g. 60cm)." type:#warn
     else if g < 0 or g >= (amin len wid) * 0.5 then MaxTools_Status "Tiles  ·  Grout must be smaller than half of the tile size." type:#warn
     else
@@ -4410,10 +4522,18 @@ fn MT_TileGenerate o =
         local est = (area / (len * wid)) as integer
         local go = true
         if est > 20000 do
-            go = queryBox ("This will create about " + est as string + " tiles and may take a while.\nContinue?") title:"MaxTools"
+        (
+            if MT_LiveRun then
+            (
+                go = false
+                MaxTools_Status ("Tiles  ·  Live update skipped: about " + est as string + " tiles. Press Generate Tiles to build it.") type:#warn
+            )
+            else go = queryBox ("This will create about " + est as string + " tiles and may take a while.\nContinue?") title:"MaxTools"
+        )
         if go do
         (
-            MaxTools_Status "Tiles  ·  Generating..." type:#busy
+            MaxTools_Status (if MT_LiveRun then "Tiles  ·  Live update..." else "Tiles  ·  Generating...") type:#busy
+            MT_TlLastSrcs = srcs
             seed o[14]
             local made = #(), nReg = 0, nTil = 0
             undo "Generate Tiles" on
@@ -4473,6 +4593,8 @@ fn MT_Action id =
         "grpOpen":   MT_GroupOpen false
         "grpOpenR":  MT_GroupOpen true
         "grpClose":  MT_GroupClose()
+        "grpAttach": MT_GroupAttach()
+        "grpDetach": MT_GroupDetach()
         "attach":    MT_Attach()
         "ref":       MT_Ref()
         "drop":      MT_DropToGround (MT_State "dropMode")
@@ -4527,12 +4649,16 @@ fn MT_Action id =
         "cblReset":    MT_CableClear MT_CablePtKeys
         "cblDefaults": MT_CableResetDefaults()
         "cblGen":      MT_CableGenerate()
+        "cblMoved":    MT_CableRegenMoved()
     )
 )
 
 -- C# butonları bunu çağırır
 fn MT_UIAction id =
 (
+    -- "<id>Live": Live update açıkken değer değişince C# gönderir; aynı eylem, ama soru sormadan
+    MT_LiveRun = id.count > 4 and (substring id (id.count - 3) 4) == "Live"
+    if MT_LiveRun do id = substring id 1 (id.count - 4)
     try (MT_Action id)
     catch
     (
@@ -4541,6 +4667,7 @@ fn MT_UIAction id =
         try (format "MaxTools stack:\n%\n" (getCurrentExceptionStackTrace())) catch()
         MaxTools_Status ("Error: " + ex + "  (details: Listener / F11)") type:#error
     )
+    MT_LiveRun = false
     OK
 )
 

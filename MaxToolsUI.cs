@@ -220,6 +220,8 @@ public class MTForm : Form
     {
         anim.Interval = 15;
         anim.Tick += OnAnimTick;
+        liveTimer.Interval = 350;
+        liveTimer.Tick += OnLiveTick;
         current = this;
         SetStyle(ControlStyles.ResizeRedraw, true);
     }
@@ -987,18 +989,31 @@ public class MTForm : Form
         TileRow(c, 134, "Offset V", "tlOffV", "0", "Shift the pattern up / forward.");
         Toggle(c, 16, 170, 273, "tlFlip", "Flip side (tiles on the other side)", false);
 
-        c = Card(pg, 2, "Generate", "Select planes, walls, floors or closed splines", 354);
+        c = Card(pg, 2, "Generate", "Select planes, walls, floors or closed splines", 382);
         TileNum(c, 62, "Material IDs", "tlIDs", 4, 1, 50, "Random material ID per tile (1 to this number).");
         TileNum(c, 98, "Seed", "tlSeed", 1, 1, 9999, "Change for a different random layout.");
         Toggle(c, 16, 134, 273, "tlRandUV", "Random UV offset per tile", true);
         Toggle(c, 16, 162, 273, "tlUVFlip", "Random UV flip per tile", true);
         Toggle(c, 16, 190, 273, "tlPoly", "Convert to Editable Poly", true);
         Toggle(c, 16, 218, 273, "tlHide", "Hide source surface", false);
-        Label rd = Btn(c, "Reset to Defaults", 16, 256, 273, 32, null, false);
+        LiveToggle(c, 246, "tlLive", "Updates the selected tiles (or surface) as you change settings.");
+        Label rd = Btn(c, "Reset to Defaults", 16, 284, 273, 32, null, false);
         rd.Click += delegate { TilesDefaults(); SetStatus("Tiles  ·  Settings reset to defaults.", 1); };
         tips.SetToolTip(rd, "All Tiles settings go back to their default values.");
-        Btn(c, "Generate Tiles", 16, 298, 273, 40, "tlGen", true);
+        Btn(c, "Generate Tiles", 16, 326, 273, 40, "tlGen", true);
         TilesDefaults();
+    }
+
+    // Live update anahtarı (vurgulu yazı); açıkken kartın ayarları değiştikçe sonuç yeniden üretilir
+    void LiveToggle(Panel c, int y, string name, string tip)
+    {
+        // Hızlı üreticilerde (Tiles, Cables) varsayılan açık; LOD / Collision ağır, UVW seçime dokunur: kapalı
+        bool on = name == "tlLive" || name == "cblLive";
+        Toggle(c, 16, y, 273, name, "Live update", on);
+        Label hint = Lbl(c, "auto", 240, y + 4, 49, 18, 7.5f, true, cAccent, ContentAlignment.MiddleRight, null);
+        tips.SetToolTip(hint, tip);
+        foreach (Control ch in c.Controls)
+            if (ch is Label && ((Label)ch).Text == "Live update" && ch.Top == y) tips.SetToolTip(ch, tip);
     }
 
     // Tiles varsayılanları (tek kaynak: sayfa kurulurken ve Reset to Defaults'ta kullanılır)
@@ -1120,12 +1135,16 @@ public class MTForm : Form
 
         // Gruplar
         Section(pg, "Group");
-        c = Card(pg, 1, "Group", "The new group is selected right away", 202);
+        c = Card(pg, 1, "Group", "The new group is selected right away", 246);
         Btn(c, "Group", 16, 62, 132, 36, "group", true);
         Btn(c, "Ungroup", 157, 62, 132, 36, "ungroup", false);
         Btn(c, "Open", 16, 106, 132, 36, "grpOpen", false);
         Btn(c, "Open Recursively", 157, 106, 132, 36, "grpOpenR", false);
-        Btn(c, "Close", 16, 150, 273, 36, "grpClose", false);
+        Label ga = Btn(c, "Attach", 16, 150, 132, 36, "grpAttach", false);
+        tips.SetToolTip(ga, "Add the selected objects to a group: click the group in a viewport.");
+        Label gd = Btn(c, "Detach", 157, 150, 132, 36, "grpDetach", false);
+        tips.SetToolTip(gd, "Remove the selected objects from their (open) group.");
+        Btn(c, "Close", 16, 194, 273, 36, "grpClose", false);
 
         // Instance araçları
         Section(pg, "Instances");
@@ -1159,12 +1178,13 @@ public class MTForm : Form
 
         // UV
         Section(pg, "UV");
-        c = Card(pg, 1, "UVW Map", "Preset type and size in one click", 224);
+        c = Card(pg, 1, "UVW Map", "Preset type and size in one click", 256);
         Segment(c, 16, 62, 273, "uvwType", new string[] { "Box", "Planar", "Cylinder", "Sphere" }, 1);
         Segment(c, 16, 100, 273, "uvwSize", new string[] { "100", "200", "300", "Custom" }, 1);
         Muted(c, "Custom size", 16, 136, 130, 28);
         Num(c, 157, 136, "uvwCustom", 150, 1, 99999, 132);
-        Btn(c, "Apply UVW Map", 16, 172, 273, 36, "uvwApply", true);
+        LiveToggle(c, 172, "uvwLive", "Updates the UVW Map of the selected objects as you change settings.");
+        Btn(c, "Apply UVW Map", 16, 204, 273, 36, "uvwApply", true);
 
         c = Card(pg, 2, "UV Shifter", "Randomly offset UVs to break texture tiling", 114);
         Btn(c, "All Elements", 16, 62, 132, 36, "uvAll", false);
@@ -1191,6 +1211,7 @@ public class MTForm : Form
 
         c = Card(pg, 2, "Reference Image", "Creates a textured plane with correct aspect ratio", 114);
         Btn(c, "Pick Image and Add to Scene", 16, 62, 273, 36, "ref", false);
+
     }
 
     void BuildUVPage()
@@ -1261,7 +1282,7 @@ public class MTForm : Form
     void BuildGamePage()
     {
         Panel pg = NewPage(4);
-        Panel c = Card(pg, 1, "Auto LOD", "Polygon reduction preserving borders and UVs", 432);
+        Panel c = Card(pg, 1, "Auto LOD", "Polygon reduction preserving borders and UVs", 462);
         Muted(c, "LOD count", 16, 62, 130, 28);
         Num(c, 157, 62, "lodCount", 3, 1, 4, 132);
         Muted(c, "LOD1 %", 16, 98, 60, 28);
@@ -1280,9 +1301,10 @@ public class MTForm : Form
         Toggle(c, 16, 290, 273, "lodL0", "Rename original to _LOD0", true);
         Toggle(c, 16, 318, 273, "lodColl", "Convert result to Editable Poly", true);
         Toggle(c, 16, 346, 273, "lodOff", "Lay out side by side", false);
-        Btn(c, "Create LODs", 16, 380, 273, 36, "lod", true);
+        LiveToggle(c, 374, "lodLive", "Rebuilds the LODs of the selected object as you change settings (can be slow on heavy meshes).");
+        Btn(c, "Create LODs", 16, 410, 273, 36, "lod", true);
 
-        c = Card(pg, 2, "Collision Generator", "Unreal naming: UCX_ / UBX_ / USP_", 300);
+        c = Card(pg, 2, "Collision Generator", "Unreal naming: UCX_ / UBX_ / USP_", 332);
         Segment(c, 16, 62, 273, "colType", new string[] { "Convex", "Parts", "Box", "Sphere" }, 1);
         Muted(c, "Convex detail", 16, 100, 130, 28);
         Num(c, 157, 100, "colDetail", 24, 6, 64, 132);
@@ -1291,7 +1313,8 @@ public class MTForm : Form
         Toggle(c, 16, 170, 273, "colMerge", "Merge parts into one object", true);
         Lbl(c, "Convex: solid objects (rocks, barrels, furniture).\nParts: walls with door/window openings.",
             16, 204, 273, 36, 8f, false, cMuted, ContentAlignment.TopLeft, null);
-        Btn(c, "Create Collision", 16, 248, 273, 36, "col", true);
+        LiveToggle(c, 244, "colLive", "Rebuilds the collision of the selected object as you change settings.");
+        Btn(c, "Create Collision", 16, 280, 273, 36, "col", true);
     }
 
     // ================= Kablo sayfası =================
@@ -1391,7 +1414,7 @@ public class MTForm : Form
         tips.SetToolTip(rd, "All settings of this route go back to the defaults.");
 
         // --- Kablo (bütün rota) ---
-        c = Card(pg, 2, "Cable", "Shared by the whole route", 364);
+        c = Card(pg, 2, "Cable", "Shared by the whole route", 392);
         Muted(c, "Cable count", 16, 62, 130, 28);
         Num(c, 157, 62, "cCount", 4, 1, 50, 132);
         Label tl = Muted(c, "Thickness", 16, 98, 130, 28);
@@ -1407,7 +1430,8 @@ public class MTForm : Form
         tips.SetToolTip(dl, "Points along the cable. Higher = smoother, heavier.");
         Num(c, 157, 242, "cDetail", 4, 1, 10, 132);
         Toggle(c, 16, 276, 273, "cPoly", "Convert to Editable Poly", false);
-        cblGenBtn = Btn(c, "Generate Cables", 16, 312, 273, 36, "cblGen", true);
+        LiveToggle(c, 304, "cblLive", "Regenerates the cables of this route as you change any setting.");
+        cblGenBtn = Btn(c, "Generate Cables", 16, 340, 273, 36, "cblGen", true);
         SetBtnEnabled(cblGenBtn, false);
 
         foreach (string k in new string[] { "cSag", "cStiff", "cTangle", "cTwist", "cSpread", "cSurf",
@@ -1491,6 +1515,29 @@ public class MTForm : Form
     void CableRefreshLater()
     {
         RunOnUI(delegate { if (execDepth == 0 && !IsDisposed) Exec("MT_UIAction \"cblRefresh\""); });
+    }
+
+    // Kablo noktası taşındı (MAXScript change handler): fare bırakılınca rotayı bir kez yeniden üret
+    readonly Timer moveTimer = new Timer();
+
+    public void CablePointMoved()
+    {
+        int on;
+        if (!states.TryGetValue("cblLive", out on) || on != 1) return;
+        if (moveTimer.Interval != 250)
+        {
+            moveTimer.Interval = 250;
+            moveTimer.Tick += delegate
+            {
+                if (Control.MouseButtons != MouseButtons.None) return;   // hâlâ sürükleniyor: bekle
+                moveTimer.Stop();
+                if (IsDisposed) return;
+                if (execDepth > 0) { moveTimer.Start(); return; }
+                Exec("MT_UIAction \"cblMovedLive\"");
+            };
+        }
+        moveTimer.Stop();
+        moveTimer.Start();
     }
 
     // ----- MAXScript'in kablo sayfası için çağırdıkları -----
@@ -1763,10 +1810,126 @@ public class MTForm : Form
 
     void ValueChanged(string name)
     {
-        if (suppressNotify || execDepth > 0 || !notify.Contains(name)) return;
-        cblArgs[0] = name;
-        cblArgs[1] = ValueOf(name);
-        Exec("MT_UIAction \"cblSet\"");
+        if (suppressNotify || execDepth > 0) return;
+        if (notify.Contains(name))
+        {
+            cblArgs[0] = name;
+            cblArgs[1] = ValueOf(name);
+            Exec("MT_UIAction \"cblSet\"");
+        }
+        LiveTrigger(name);
+    }
+
+    // ----- Live update: değer değişince ilgili üretici, kısa bir beklemeden sonra kendiliğinden yeniden çalışır -----
+    readonly Timer liveTimer = new Timer();
+    string liveAction;
+
+    void LiveTrigger(string name)
+    {
+        if (name.EndsWith("Live")) return;
+        string tg = null, act = null;
+        if (name.StartsWith("tl")) { tg = "tlLive"; act = "tlGen"; }
+        else if (name.StartsWith("uvw")) { tg = "uvwLive"; act = "uvwApply"; }
+        else if (name.StartsWith("lod")) { tg = "lodLive"; act = "lod"; }
+        else if (name.StartsWith("col")) { tg = "colLive"; act = "col"; }
+        else if (notify.Contains(name)) { tg = "cblLive"; act = "cblGen"; }
+        int on;
+        if (tg == null || !states.TryGetValue(tg, out on) || on != 1) return;
+        liveAction = act;
+        liveTimer.Stop();
+        liveTimer.Start();   // arka arkaya değişikliklerde yalnızca sonuncusundan sonra bir kez
+    }
+
+    void OnLiveTick(object sender, EventArgs e)
+    {
+        liveTimer.Stop();
+        if (IsDisposed || liveAction == null) return;
+        if (execDepth > 0) { liveTimer.Start(); return; }   // başka bir komut sürüyorsa biraz sonra
+        SetProgress(0);
+        Exec("MT_UIAction \"" + liveAction + "Live\"");
+    }
+
+    // ----- Spinner: basılı tutup yukarı / aşağı çekerek değer değiştirme (Shift: 10 kat), tıklama: üst +1, alt -1 -----
+    // begin(): sürükleme başında başlangıç değerini sakla; delta(adım): başlangıca göre adım sayısı
+    void Spinner(Panel bg, int x, MethodInvokerEx begin, Action<int> delta)
+    {
+        Panel sp = Pnl(bg, x, 0, 22, 28, cInput, 0);
+        sp.Cursor = Cursors.SizeNS;
+        bool down = false, moved = false, hover = false;
+        int y0 = 0, last = 0;
+        sp.Paint += delegate (object o, PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (SolidBrush b = new SolidBrush(hover || down ? cText : cMuted))
+            {
+                int cx = sp.Width / 2;
+                e.Graphics.FillPolygon(b, new Point[] { new Point(cx - 4, 12), new Point(cx + 4, 12), new Point(cx, 7) });
+                e.Graphics.FillPolygon(b, new Point[] { new Point(cx - 4, 16), new Point(cx + 4, 16), new Point(cx, 21) });
+            }
+        };
+        sp.MouseEnter += delegate { hover = true; sp.Invalidate(); };
+        sp.MouseLeave += delegate { hover = false; sp.Invalidate(); };
+        sp.MouseDown += delegate (object o, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || execDepth > 0) return;
+            CommitEdit();
+            down = true; moved = false; last = 0;
+            y0 = Cursor.Position.Y;
+            begin();
+            sp.Capture = true;
+            sp.Invalidate();
+        };
+        sp.MouseMove += delegate
+        {
+            if (!down) return;
+            int steps = (y0 - Cursor.Position.Y) / 4;
+            if (steps == last) return;
+            moved = true;
+            last = steps;
+            delta(steps * ((ModifierKeys & Keys.Shift) != 0 ? 10 : 1));
+        };
+        sp.MouseUp += delegate (object o, MouseEventArgs e)
+        {
+            if (!down) return;
+            down = false;
+            sp.Capture = false;
+            if (!moved) delta(e.Y < 14 ? 1 : -1);
+            sp.Invalidate();
+        };
+    }
+
+    public delegate void MethodInvokerEx();
+
+    // Ondalıklı kutular (uzunluk, derece) için spinner; adım değerin büyüklüğüne göre
+    static readonly string[] FloatFields = { "tlLen", "tlWid", "tlGrout", "tlBevel", "tlHeight", "tlOffU", "tlOffV", "cThick",
+                                             "tlRotJit", "tlTilt" };
+
+    void FloatSpinner(Panel bg, TextBox t, string name)
+    {
+        double start = 0, step = 1;
+        string unit = "";
+        bool len = lenFields.Contains(name);
+        bool allowNeg = name == "tlOffU" || name == "tlOffV";
+        Spinner(bg, bg.Width - 24, delegate
+        {
+            string s = (t.Text ?? "").Trim().Replace(',', '.');
+            int i = 0;
+            while (i < s.Length && "0123456789.-+".IndexOf(s[i]) >= 0) i++;
+            if (!double.TryParse(s.Substring(0, i), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out start)) start = 0;
+            unit = s.Substring(i).Trim();
+            if (len && unit.Length == 0) unit = "cm";
+            double a = Math.Abs(start);
+            step = a >= 10 ? 1 : a >= 1 ? 0.1 : 0.01;
+        }, delegate (int steps)
+        {
+            double v = Math.Round(start + steps * step, 4);
+            if (!allowNeg && v < 0) v = 0;
+            string txt = v.ToString("0.0##", System.Globalization.CultureInfo.InvariantCulture) + unit;
+            if (t.Text == txt) return;
+            t.Text = txt;
+            ValueChanged(name);
+        });
     }
 
     // Odaktaki metin kutusundan çıkar (LostFocus -> değer onaylanır)
@@ -1833,11 +1996,13 @@ public class MTForm : Form
         t.BackColor = cInput;
         t.ForeColor = cText;
         t.Font = PxFont("Segoe UI", 9.5f);
-        t.SetBounds(9, 6, w - 18, 18);
+        bool spin = Array.IndexOf(FloatFields, name) >= 0;
+        t.SetBounds(9, 6, w - (spin ? 36 : 18), 18);
         HookFocus(t);
         HookCommit(t, name);
         bg.Controls.Add(t);
         texts[name] = t;
+        if (spin) FloatSpinner(bg, t, name);
         return t;
     }
 
@@ -1850,37 +2015,28 @@ public class MTForm : Form
     void Num(Control par, int x, int y, string name, int val, int mn, int mx, int w)
     {
         Panel bg = Pnl(par, x, y, w, 28, cInput, 6);
-        Label minus = Lbl(bg, "−", 0, 0, 26, 28, 11f, false, cMuted, ContentAlignment.MiddleCenter, null);
-        Label plus = Lbl(bg, "+", w - 26, 0, 26, 28, 11f, false, cMuted, ContentAlignment.MiddleCenter, null);
         TextBox t = new TextBox();
         t.BorderStyle = BorderStyle.None;
         t.BackColor = cInput;
         t.ForeColor = cText;
         t.Font = PxFont("Segoe UI", 9.5f);
         t.TextAlign = HorizontalAlignment.Center;
-        t.SetBounds(26, 6, w - 52, 18);
+        t.SetBounds(10, 6, w - 36, 18);
         t.Text = val.ToString();
         HookFocus(t);
         HookCommit(t, name);
         bg.Controls.Add(t);
         texts[name] = t;
         limits[name] = new int[] { mn, mx };
-        foreach (Label l in new Label[] { minus, plus })
+        // Max spinner'ı gibi: basılı tut + yukarı / aşağı çek
+        int start = val;
+        Spinner(bg, w - 24, delegate { start = GetInt(name); }, delegate (int steps)
         {
-            Label lb = l;
-            int dir = (lb == minus) ? -1 : 1;
-            lb.Cursor = Cursors.Hand;
-            lb.MouseEnter += delegate { lb.ForeColor = cText; };
-            lb.MouseLeave += delegate { lb.ForeColor = cMuted; };
-            lb.Click += delegate
-            {
-                int v = GetInt(name) + dir;
-                v = Math.Max(mn, Math.Min(mx, v));
-                if (t.Text == v.ToString()) return;
-                t.Text = v.ToString();
-                ValueChanged(name);
-            };
-        }
+            int v = Math.Max(mn, Math.Min(mx, start + steps));
+            if (t.Text == v.ToString()) return;
+            t.Text = v.ToString();
+            ValueChanged(name);
+        });
     }
 
     // Hazır değer kutusu: seçilen değeri hedef metin kutusuna yazar

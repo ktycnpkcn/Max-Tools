@@ -1,4 +1,4 @@
-MAX TOOLS  v4.5
+MAX TOOLS  v4.6
 Fast modeling, UV and game-ready tools for Autodesk 3ds Max 2024+
 ===================================================================
 
@@ -74,12 +74,20 @@ icons\                 Toolbar and side bar icons
 
 FEATURES
 --------
+General
+   Number fields          Drag the small arrows up / down to change a value (Shift = 10x faster),
+                          click the upper / lower half for +1 / -1.
+   Live update            Tiles, Cables, UVW Map, LOD and Collision update the existing result while
+                          you change settings (Tiles and Cables: on by default). Moving a cable
+                          point regenerates its route when you release the mouse.
+
 Modeling  (sections; jump to a section from the left menu)
  Split & Merge
    Attach / Detach        Detach elements into objects, attach + center pivot,
                           detach / attach splines
  Group
-   Group                  Group (new group is selected), Ungroup, Open, Open Recursively, Close
+   Group                  Group (new group is selected), Ungroup, Open, Open Recursively, Close,
+                          Attach / Detach (same as the 3ds Max Group menu)
  Instances
    Make Instances         Pick a source, then turn selected objects or lights into instances of it
                           (modifiers included, transforms kept); Select Instances

@@ -1,6 +1,9 @@
 # MaxTools — proje rehberi (Claude için)
 
-3ds Max 2024+ için modelleme / UV / isimlendirme / LOD-collision araç paketi.
+> **Ayrıntılı teknik mimari: `docs/ARCHITECTURE.md`** — yeni oturumda işe başlamadan önce oku (sayfalar, buton id →
+> fonksiyon tablosu, köprü API'si, Live update, Cables / Tiles algoritmaları, sahne veri sözleşmeleri, test ve yayın).
+
+3ds Max 2024+ için modelleme / UV / isimlendirme / LOD-collision / kablo / kaplama araç paketi.
 Kullanıcı: 3D artist, **Türkçe konuşur** (yanıtlar Türkçe). **Uygulama içi metinler İngilizce**, kod yorumları Türkçe kalır.
 Bu klasör (`D:\3Ds Max Element Detach\Max Tools`) hem çalışma klasörü hem git deposu hem de kullanıcının Max'inin
 yüklediği kurulumdur. Üst klasördeki (`D:\3Ds Max Element Detach\*.ms|*.cs`) dosyalar ESKİ, kullanılmıyor.
@@ -28,8 +31,13 @@ yüklediği kurulumdur. Üst klasördeki (`D:\3Ds Max Element Detach\*.ms|*.cs`)
 - `MAXFORM` tanımıyla `MaxCustomControls.MaxForm`'dan türer (yoksa `Form`). Kenarlıksız, kenardan boyutlandırılır
   (WM_NCHITTEST), duyarlı yerleşim: kartlar 305px, sığdığı kadar sütun; dar pencerede menü ikonlara küçülür.
 - **Bölümler:** sayfa içinde `Section(pg, "Başlık")` tam genişlikte başlık açar, sonraki kartlar o başlığa girer.
-  Modeling: Split & Merge / Transform / UV / Scene. Yeni aracı ilgili sayfadaki uygun bölüme koy (pivot araçları →
-  Transform); uygun yoksa yeni bölüm aç. Araçları başka sayfaya taşıma (kullanıcı istemedi).
+  Modeling: Split & Merge / Group / Instances / Transform / UV / Material & Color / Scene. Yeni aracı ilgili sayfadaki
+  uygun bölüme koy; uygun yoksa yeni bölüm aç. Araçları başka sayfaya taşıma (kullanıcı istemedi).
+- **Live update:** üretici kartlarda `LiveToggle`; değer değişince `LiveTrigger` → 350 ms sonra `MT_UIAction "<id>Live"`
+  (`MT_LiveRun` = true: soru yok, yalnızca zaten üretilmiş sonuç güncellenir). Yeni üretici eklersen buna bağla.
+- **Sayı kutuları spinner'lı** (`Num` / `FloatFields`): sürükle-çek; +/- etiketleri yok.
+- Üretilen sonuçlar kaynağa user prop ile bağlı (`MT_TileSrc`, `MT_LODSrc`, `MT_ColSrc`, `MT_CableRoute`): tekrar
+  üretimde eskisi silinir, sonuç seçiliyken kaynağına dönülür.
 - **Yeni araç eklemek:** C# `Build*Page` içine `Card(...)` + kontroller (`Btn` id'si benzersiz), `MaxTools.ms`'de
   `MT_Action` içine `"<id>": ...` ve araç fonksiyonu (`MaxTools_Status ... type:#ok` ile durum yazar, `undo "..." on (...)`).
 - Ayarlar: `<plugcfg>\MaxTools.ini` ([Window] X,Y,W,H,Page; [Update] AutoCheck; [SideBar] Show).
@@ -102,7 +110,11 @@ yüklediği kurulumdur. Üst klasördeki (`D:\3Ds Max Element Detach\*.ms|*.cs`)
   (`_update` → yedek `_update_backup` → yerine koy → `MT_ReloadAfterUpdate`). Raw CDN birkaç dakika gecikebilir.
 - v3.8 ve öncesi kendini güncelleyemez (README'de tek seferlik elle geçiş anlatılıyor).
 
+## Kullanıcı ile çalışma
+- Fikirleri ham beyin fırtınası; en sağlam tasarımı sen seç, gerekçesini kısaca söyle.
+- Değişiklikleri biriktir, **yayın yalnızca kullanıcı "yayınla / pushla / commit edelim" deyince** (toplu güncelleme).
+- Uzun açıklama sevmiyor: kısa, net özet. Matcap/Zebra yapıldı ve reddedildi — tekrar önerme.
+
 ## Yapılabilecekler (konuşulmuş fikirler)
-Model Doktoru (n-gon, ters normal, isolated vertex, ölçek, eksik UV tarama + tek tıkla düzeltme), pivot araçları,
-hızlı ayna, scatter/rastgeleleştirici, toplu FBX export, polycount paneli, kamera yöneticisi / clay render,
-koyu temaya uygun özel kaydırma çubuğu, "Reset UVs" butonu.
+`docs/ARCHITECTURE.md` §13: Model Doktoru, hızlı ayna, scatter, toplu FBX export, polycount paneli, kamera yöneticisi,
+özel kaydırma çubuğu, Reset UVs, Tiles için kavisli yüzey / preset / MultiTexture.
