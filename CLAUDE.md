@@ -71,7 +71,19 @@ yüklediği kurulumdur. Üst klasördeki (`D:\3Ds Max Element Detach\*.ms|*.cs`)
 - Dosyalar git checkout sonrası **CRLF** olabilir: PowerShell `.Replace`/regex'te "`n" kalıbı yerine `\r?\n` kullan;
   sürüm gibi "·" içeren metinleri PowerShell betiğiyle değiştirme (karakter bozuluyor, değişiklik sessizce uygulanmıyor),
   Edit aracını kullan.
-- `where` anahtar kelime, değişken adı olmaz.
+- `where`, `by`, `off` anahtar kelime, değişken adı olmaz. `fN` = `fn`! (büyük/küçük harf duyarsız)
+- **`units.decodeValue` Türkçe Windows'ta ondalığı yanlış okur** ("1.5cm"→1, "0.4cm"→0, "1.2m"→100). Birimli
+  uzunluk için HER ZAMAN `MT_DecodeLen s def` kullan (sayıyı kendisi okur, Max'ten yalnızca "1<birim>" çarpanını alır).
+
+## Tiles sayfası (6. sayfa, `MT_Tl*` / `MT_TileGenerate`)
+- Kaynağın snapshot'ından aynı düzlemde + kenardan bağlı yüzler bölge olur (`Dictionary` kenar haritası); desen
+  bölgenin 2B düzleminde üretilip bölge üçgenlerine göre Sutherland–Hodgman ile kırpılır (kenar bayrakları: gerçek
+  kenar bevel alır, kesik kenar almaz). Tamamı içerideki taş tek parça kalır. Duvarda U yatay, V yukarı (dünyaya bağlı).
+- Bevel güvenliği: sivri köşede inset noktası en fazla 3*bevel kayar; iç yarıçapı < 1.5*bevel parçaya bevel yok
+  (yoksa dev yüz oluşup görüntüyü kaplıyordu).
+- Sonuç `<kaynak>_Tiles` + `MT_TileSrc` = kaynak handle; seçili taş objesiyle Generate kaynağı bulup yeniden üretir.
+- Test: 3dsmaxbatch ile render alınabilir (`render camera:... outputfile:... vfb:false`); derz/bevel görsel kontrolü için
+  taban rengini kırmızı yap.
 
 ## Doğrulama (her değişiklikten sonra)
 1. `powershell -File dev\check.ps1` → ileri referans, tanımsız MT_ fonksiyonu, büyük/küçük çakışma, anahtar kelime,

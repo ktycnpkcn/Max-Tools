@@ -1,7 +1,7 @@
 {
-  "version": "4.4",
-  "build": 33,
-  "notes": "New: Make Instances (turn objects or lights into instances of a source) and Pivot tool (any side / corner / center, local or world axes, groups or objects inside).",
+  "version": "4.5",
+  "build": 34,
+  "notes": "New Tiles page: parquet and tiles on any flat surface (whole rooms in one object, openings left out) with Grid, Brick, Planks, Herringbone and Basket patterns. Fix: decimal sizes like 1.5cm were read wrong on some Windows languages (Cables thickness, UVW Map).",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",

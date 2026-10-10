@@ -163,7 +163,7 @@ public class MTForm : Form
     // ----- Durum -----
     Panel content, progTrack, progFill, statusDot, indicator;
     Label title, subtitle, statusText;
-    const int PageCount = 5;
+    const int PageCount = 6;
     Panel[] pages = new Panel[PageCount];
     Panel[] navs = new Panel[PageCount];
     Label[] navIco = new Label[PageCount], navTxt = new Label[PageCount];
@@ -204,9 +204,10 @@ public class MTForm : Form
         new string[] { "UV", "Seams, unwrapping, straightening and packing" },
         new string[] { "Naming", "Engine-ready object names" },
         new string[] { "LOD & Collision", "Game-ready optimization tools" },
-        new string[] { "Cables", "Route-based cable and tape generator" }
+        new string[] { "Cables", "Route-based cable and tape generator" },
+        new string[] { "Tiles", "Parquet and tiles on any flat surface" }
     };
-    static readonly int[] PageIcons = new int[] { 0xE70F, 0xE8A9, 0xE8AC, 0xE7FC, 0xE71B };
+    static readonly int[] PageIcons = new int[] { 0xE70F, 0xE8A9, 0xE8AC, 0xE7FC, 0xE71B, 0xE80A };
 
     static List<Control>[] MakeCardLists()
     {
@@ -341,6 +342,7 @@ public class MTForm : Form
         BuildNamePage();
         BuildGamePage();
         BuildCablePage();
+        BuildTilesPage();
         BuildNavSubs();
 
         // Durum çubuğu
@@ -924,9 +926,104 @@ public class MTForm : Form
     readonly List<Panel>[] pageSections = MakePanelLists();
     readonly List<Panel>[] navSubs = MakePanelLists();
     readonly Label[] navChev = new Label[PageCount];
-    readonly bool[] navOpen = new bool[] { true, true, true, true, true };
+    readonly bool[] navOpen = MakeOpenFlags();
     Panel scrollPg;
     int scrollTarget;
+
+    static bool[] MakeOpenFlags()
+    {
+        bool[] a = new bool[PageCount];
+        for (int i = 0; i < PageCount; i++) a[i] = true;
+        return a;
+    }
+
+    // ================= Kaplama (parke / seramik) sayfası =================
+    void TileRow(Panel c, int y, string label, string name, string def, string tip)
+    {
+        Label l = Muted(c, label, 16, y, 130, 28);
+        tips.SetToolTip(l, tip);
+        Txt(c, 157, y, 132, name).Text = def;
+    }
+
+    void TileNum(Panel c, int y, string label, string name, int val, int mn, int mx, string tip)
+    {
+        Label l = Muted(c, label, 16, y, 130, 28);
+        tips.SetToolTip(l, tip);
+        Num(c, 157, y, name, val, mn, mx, 132);
+    }
+
+    void BuildTilesPage()
+    {
+        Panel pg = NewPage(6);
+
+        Section(pg, "Pattern");
+        Panel c = Card(pg, 1, "Pattern", "Board / tile layout", 360);
+        Segment(c, 16, 62, 273, "tlPat", new string[] { "Grid", "Brick", "Planks", "Herring", "Basket" }, 3);
+        TileRow(c, 100, "Length", "tlLen", "120cm", "Board / tile length (examples: 120cm, 60cm, 1.2m).");
+        TileRow(c, 136, "Width", "tlWid", "20cm", "Board / tile width.");
+        TileNum(c, 172, "Scale %", "tlScale", 100, 1, 1000,
+            "Scales Length and Width together (proportions stay). Grout, bevel and height are not scaled.");
+        TileNum(c, 208, "Row offset %", "tlBrick", 25, 0, 100,
+            "How far each row is shifted from the previous one (Brick: fixed, 50 = half a tile; Planks: smallest shift).");
+        TileNum(c, 244, "Row offset max %", "tlBrickMax", 25, 0, 100,
+            "Planks: largest row shift. Each row shifts by a random amount between the two values.");
+        TileNum(c, 280, "Min length %", "tlMinLen", 100, 5, 100, "Planks: shortest board as % of Length (100 = all boards equal).");
+        TileNum(c, 316, "Min width %", "tlMinW", 100, 5, 100, "Planks: narrowest row as % of Width (100 = all rows equal).");
+
+        c = Card(pg, 2, "Joint & Profile", "Grout gap, edge bevel and thickness", 178);
+        TileRow(c, 62, "Grout", "tlGrout", "0.3cm", "Gap between tiles. The source surface shows through as grout.");
+        TileRow(c, 98, "Bevel", "tlBevel", "0.1cm", "Chamfer on the tile edges (cut edges stay straight).");
+        TileRow(c, 134, "Height", "tlHeight", "1cm", "Tile / board thickness.");
+
+        c = Card(pg, 2, "Variation", "Random differences per tile", 178);
+        TileNum(c, 62, "Height variation %", "tlHVar", 0, 0, 100, "Random thickness difference per tile.");
+        TileRow(c, 98, "Rotation jitter °", "tlRotJit", "0", "Random small turn per tile (e.g. 0.5).");
+        TileRow(c, 134, "Tilt °", "tlTilt", "0", "Random slope along each tile; the base stays on the surface (e.g. 0.3).");
+
+        Section(pg, "Placement & Output");
+        c = Card(pg, 1, "Placement", "Rotate and shift the pattern", 214);
+        TileNum(c, 62, "Rotation °", "tlRot", 0, 0, 359, "Pattern angle. Herringbone usually looks right at 45.");
+        TileRow(c, 98, "Offset U", "tlOffU", "0", "Shift the pattern sideways.");
+        TileRow(c, 134, "Offset V", "tlOffV", "0", "Shift the pattern up / forward.");
+        Toggle(c, 16, 170, 273, "tlFlip", "Flip side (tiles on the other side)", false);
+
+        c = Card(pg, 2, "Generate", "Select planes, walls, floors or closed splines", 354);
+        TileNum(c, 62, "Material IDs", "tlIDs", 4, 1, 50, "Random material ID per tile (1 to this number).");
+        TileNum(c, 98, "Seed", "tlSeed", 1, 1, 9999, "Change for a different random layout.");
+        Toggle(c, 16, 134, 273, "tlRandUV", "Random UV offset per tile", true);
+        Toggle(c, 16, 162, 273, "tlUVFlip", "Random UV flip per tile", true);
+        Toggle(c, 16, 190, 273, "tlPoly", "Convert to Editable Poly", true);
+        Toggle(c, 16, 218, 273, "tlHide", "Hide source surface", false);
+        Label rd = Btn(c, "Reset to Defaults", 16, 256, 273, 32, null, false);
+        rd.Click += delegate { TilesDefaults(); SetStatus("Tiles  ·  Settings reset to defaults.", 1); };
+        tips.SetToolTip(rd, "All Tiles settings go back to their default values.");
+        Btn(c, "Generate Tiles", 16, 298, 273, 40, "tlGen", true);
+        TilesDefaults();
+    }
+
+    // Tiles varsayılanları (tek kaynak: sayfa kurulurken ve Reset to Defaults'ta kullanılır)
+    static readonly string[][] TileDefaults = new string[][]
+    {
+        new string[] { "tlPat", "3" }, new string[] { "tlLen", "120.0cm" }, new string[] { "tlWid", "20.0cm" }, new string[] { "tlScale", "100" },
+        new string[] { "tlBrick", "25" }, new string[] { "tlBrickMax", "25" }, new string[] { "tlMinLen", "100" }, new string[] { "tlMinW", "100" },
+        new string[] { "tlGrout", "0.3cm" }, new string[] { "tlBevel", "0.1cm" }, new string[] { "tlHeight", "1.0cm" },
+        new string[] { "tlHVar", "0" }, new string[] { "tlRotJit", "0" }, new string[] { "tlTilt", "0" },
+        new string[] { "tlRot", "0" }, new string[] { "tlOffU", "0.0cm" }, new string[] { "tlOffV", "0.0cm" },
+        new string[] { "tlFlip", "0" }, new string[] { "tlIDs", "4" }, new string[] { "tlSeed", "1" },
+        new string[] { "tlRandUV", "1" }, new string[] { "tlUVFlip", "1" }, new string[] { "tlPoly", "1" }, new string[] { "tlHide", "0" }
+    };
+
+    void TilesDefaults()
+    {
+        foreach (string[] d in TileDefaults)
+        {
+            TextBox tb;
+            int v;
+            if (texts.TryGetValue(d[0], out tb)) tb.Text = d[1];
+            else if (segLabels.ContainsKey(d[0]) && int.TryParse(d[1], out v)) SegSelect(d[0], v);
+            else if (toggles.ContainsKey(d[0])) SetToggle(d[0], d[1] == "1");
+        }
+    }
 
     static List<Panel>[] MakePanelLists()
     {
@@ -1689,12 +1786,39 @@ public class MTForm : Form
         }
     }
 
+    // Birimli uzunluk kutuları (odaktan çıkınca biçimlenir)
+    readonly List<string> lenFields = new List<string>(new string[] {
+        "tlLen", "tlWid", "tlGrout", "tlBevel", "tlHeight", "tlOffU", "tlOffV", "cThick" });
+
+    // "1" -> "1.0cm", "0,35 mm" -> "0.35mm"; sayı okunamazsa metin olduğu gibi kalır
+    static string NormLen(string s)
+    {
+        string t = (s ?? "").Trim().Replace(',', '.');
+        int i = 0;
+        while (i < t.Length && "0123456789.-+".IndexOf(t[i]) >= 0) i++;
+        double v;
+        if (!double.TryParse(t.Substring(0, i), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out v)) return s;
+        string unit = t.Substring(i).Trim();
+        if (unit.Length == 0) unit = "cm";
+        return v.ToString("0.0##", System.Globalization.CultureInfo.InvariantCulture) + unit;
+    }
+
     // Metin kutusu: odaktan çıkınca ya da Enter'da, değer değiştiyse bildir
     void HookCommit(TextBox t, string name)
     {
         string before = null;
         t.GotFocus += delegate { before = t.Text; };
-        t.LostFocus += delegate { if (before != null && t.Text != before) { before = null; ValueChanged(name); } };
+        t.LostFocus += delegate
+        {
+            // Uzunluk kutuları: "1" -> "1.0cm", "0,35" -> "0.35cm" (birim yazılmışsa korunur)
+            if (lenFields.Contains(name))
+            {
+                string n = NormLen(t.Text);
+                if (n != t.Text) t.Text = n;
+            }
+            if (before != null && t.Text != before) { before = null; ValueChanged(name); }
+        };
         t.KeyDown += delegate (object s, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; ActiveControl = null; }

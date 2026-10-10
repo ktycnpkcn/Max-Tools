@@ -1,4 +1,4 @@
-MAX TOOLS  v4.4
+MAX TOOLS  v4.5
 Fast modeling, UV and game-ready tools for Autodesk 3ds Max 2024+
 ===================================================================
 
@@ -124,6 +124,16 @@ Cables
                           twist, spread, ground / air. Every shape setting can be overridden
                           per point (select points in the list). Cables lie on the ground,
                           hang between raised points and ride over their own crossings.
+
+Tiles
+   Generate Tiles         Parquet / tiles on planes, floors, walls (any angle) and closed splines.
+                          One object with several flat sides (e.g. a whole bathroom) is split
+                          into its flat surfaces automatically; openings are left out.
+                          Patterns: Grid, Brick, Planks, Herringbone, Basket weave.
+                          Length / width / scale, grout, bevel (cut edges stay straight), height,
+                          row offset, min length / width, rotation, offset, flip side,
+                          per-tile height / rotation / tilt variation, random material IDs,
+                          random UV offset / flip. Select the result and generate again to update.
 
 TROUBLESHOOTING
 ---------------

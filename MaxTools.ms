@@ -4,9 +4,9 @@
 -- =========================================
 
 global MT_UI, MT_UIAsm, MT_UIAsmStamp
-global MT_Version = "v4.4  ·  build 33"
+global MT_Version = "v4.5  ·  build 34"
 -- Online güncelleme: GitHub'daki version.json'daki build bu sayıdan büyükse güncelleme önerilir
-global MT_BuildNum = 33
+global MT_BuildNum = 34
 global MT_UpdateBase = "https://raw.githubusercontent.com/ktycnpkcn/Max-Tools/main/"
 global MT_OnUIEvent
 global MT_UFind
@@ -92,6 +92,23 @@ fn MaxTools_Status msg type:#info =
             default: 0
         )
         try (MT_UI.SetStatus msg code) catch()
+    )
+)
+
+-- Birimli uzunluk okur ("1.5cm", "1,5 cm", "12mm", "0.3" = görüntü birimi) -> sistem birimi; geçersizse def.
+-- units.decodeValue Türkçe Windows'ta ondalığı yanlış okuyor ("1.5cm" -> 1, "0.4cm" -> 0): sayı burada okunur,
+-- Max'ten yalnızca birim çarpanı ("1cm") alınır.
+fn MT_DecodeLen s def =
+(
+    local str = trimLeft (trimRight (substituteString (s as string) "," "."))
+    local i = 1
+    while i <= str.count and (findString "0123456789.-+" str[i]) != undefined do i += 1
+    local v = (substring str 1 (i - 1)) as float
+    if v == undefined then def
+    else
+    (
+        local f = try (units.decodeValue ("1" + (trimLeft (substring str i -1)))) catch undefined
+        if f == undefined or f <= 0 then def else v * f
     )
 )
 
@@ -551,7 +568,7 @@ fn MT_ApplyUVWMap mapType size =
     if geos.count == 0 then MaxTools_Status "UVW Map  ·  Please select geometry." type:#warn
     else
     (
-        local sz = try (units.decodeValue (size as string)) catch undefined
+        local sz = MT_DecodeLen size undefined
         if sz == undefined or sz <= 0 do sz = size as float
         local mt = (#(4, 0, 1, 2))[mapType]
         local typeName = (#("Box", "Planar", "Cylinder", "Sphere"))[mapType]
@@ -3851,7 +3868,7 @@ fn MT_CableGenerate =
     )
     if go do
     (
-        local th = try (units.decodeValue (MT_CableRouteGet r "cThick")) catch undefined
+        local th = MT_DecodeLen (MT_CableRouteGet r "cThick") undefined
         if pts.count < 2 then MaxTools_Status "Cables  ·  The route needs at least 2 points." type:#warn
         else if th == undefined or th <= 0 then MaxTools_Status "Cables  ·  Invalid thickness (examples: 1cm, 8mm, 0.5)." type:#warn
         else
@@ -3867,6 +3884,567 @@ fn MT_CableGenerate =
             MaxTools_Progress 100
             redrawViews()
             MaxTools_Status ("Cables  ·  " + made.count as string + " cable(s) generated along " + pts.count as string + " points (route " + r as string + ").") type:#ok
+        )
+    )
+)
+
+-- =========================================
+-- ARAÇLAR: KAPLAMA (parke / seramik) — her yüzeyde
+-- Kaynak objenin kopyasından (snapshot) aynı düzlemdeki bağlı yüzler bölgelere ayrılır (duvar, zemin, tavan...);
+-- her bölgede desen kendi düzleminde üretilip bölgenin üçgenlerine göre kırpılır (boşluklar dahil).
+-- Kaynak obje değiştirilmez. Kırpılan kenarlar düz (bevelsiz) kalır. Sonuç "<kaynak>_Tiles" (+ MT_TileSrc prop).
+-- 2B koordinatlar düzlemin dünyaya bağlı eksenlerinde: duvarda U yatay, V yukarı (sıralar oda boyunca hizalı).
+-- =========================================
+-- c, a->b'nin solunda mı (>0)
+fn MT_TlSide a b c = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+fn MT_TlArea pts =
+(
+    local s = 0.0, n = pts.count
+    for i = 1 to n do
+    (
+        local q = pts[(mod i n) as integer + 1]
+        s += pts[i].x * q.y - q.x * pts[i].y
+    )
+    s / 2.0
+)
+
+-- Yarım düzlem kırpma (a->b'nin solu içeride). flags[i]: pts[i]->pts[i+1] kenarı gerçek kenar mı (bevel alır)
+-- Dönüş #(noktalar, bayraklar); kırpma çizgisi üzerindeki yeni kenarlar "kesik" (false) olur
+fn MT_TlClipHalf pts flags a b =
+(
+    local outP = #(), inF = #()
+    local n = pts.count
+    for i = 1 to n do
+    (
+        local p1 = pts[i], p2 = pts[(mod i n) as integer + 1], fl = flags[i]
+        local d1 = MT_TlSide a b p1, d2 = MT_TlSide a b p2
+        local in1 = d1 >= 0, in2 = d2 >= 0
+        if in1 and in2 then (append outP p2; append inF fl)
+        else if in1 then (append outP (p1 + (p2 - p1) * (d1 / (d1 - d2))); append inF fl)
+        else if in2 do
+        (
+            append outP (p1 + (p2 - p1) * (d1 / (d1 - d2))); append inF false
+            append outP p2; append inF fl
+        )
+    )
+    local m = outP.count
+    local outF = for i = 1 to m collect inF[(mod i m) as integer + 1]
+    #(outP, outF)
+)
+
+-- Dışbükey çokgeni CCW üçgene göre kırpar
+fn MT_TlClipTri pts flags tri =
+(
+    local r = #(pts, flags)
+    for k = 1 to 3 while r[1].count >= 3 do r = MT_TlClipHalf r[1] r[2] tri[k] tri[(mod k 3) as integer + 1]
+    r
+)
+
+-- Çok yakın ardışık noktaları atar (sıfır uzunluklu kenar kalmasın)
+fn MT_TlClean pts flags eps =
+(
+    local op = #(), ofl = #()
+    local n = pts.count
+    for i = 1 to n do
+    (
+        local q = pts[(mod i n) as integer + 1]
+        if (distance pts[i] q) > eps do (append op pts[i]; append ofl flags[i])
+    )
+    #(op, ofl)
+)
+
+-- Kenar başına içe öteleme: gerçek kenar d kadar, kesik kenar 0 (dışbükey CCW çokgen)
+fn MT_TlInset pts flags d =
+(
+    local n = pts.count
+    local res = #()
+    for i = 1 to n do
+    (
+        local ip = if i == 1 then n else i - 1
+        local pPrev = pts[ip], pCur = pts[i], pNext = pts[(mod i n) as integer + 1]
+        local e1 = normalize (pCur - pPrev), e2 = normalize (pNext - pCur)
+        local d1 = if flags[ip] then d else 0.0
+        local d2 = if flags[i] then d else 0.0
+        local a1 = pPrev + [-e1.y, e1.x, 0] * d1
+        local a2 = pCur + [-e2.y, e2.x, 0] * d2
+        local den = e1.x * e2.y - e1.y * e2.x
+        local q = a2
+        if (abs den) >= 1e-6 do
+        (
+            local w = a2 - a1
+            q = a1 + e1 * ((w.x * e2.y - w.y * e2.x) / den)
+        )
+        -- Sivri köşede kesişim çok uzağa kaçar (dev yüz oluşur): köşe noktası en fazla 3*d kayabilir
+        if (distance q pCur) > d * 3.0 do
+        (
+            local bis = [-e1.y, e1.x, 0] * d1 + [-e2.y, e2.x, 0] * d2
+            q = if (length bis) > 1e-9 then pCur + (normalize bis) * d else pCur
+        )
+        append res q
+    )
+    res
+)
+
+-- Çokgenin yaklaşık iç yarıçapı (2*Alan / Çevre): bevel bu parçaya sığar mı
+fn MT_TlInRadius pts =
+(
+    local per = 0.0
+    for i = 1 to pts.count do per += distance pts[i] pts[(mod i pts.count) as integer + 1]
+    if per > 0 then 2.0 * (abs (MT_TlArea pts)) / per else 0.0
+)
+
+-- Derz payı kadar küçültülmüş dikdörtgen taş: #(köşeler CCW, uv başlangıcı, taş ekseni)
+fn MT_TlRect x0 y0 x1 y1 g vertical =
+(
+    local hg = g / 2.0
+    if (x1 - x0) <= g or (y1 - y0) <= g then undefined
+    else #(#([x0 + hg, y0 + hg, 0], [x1 - hg, y0 + hg, 0], [x1 - hg, y1 - hg, 0], [x0 + hg, y1 - hg, 0]), \
+           [x0, y0, 0], (if vertical then [0, 1, 0] else [1, 0, 0]))
+)
+
+-- Desen üretimi (desen uzayında, bmin/bmax kutusunu kaplar)
+-- pat: 1 Grid, 2 Brick, 3 Random Planks, 4 Herringbone, 5 Basket Weave
+fn MT_TlPattern pat bmin bmax len wid g offPct minPct offMax minW =
+(
+    local tiles = #()
+    case pat of
+    (
+        1:
+        (
+            for y = (floor (bmin.y / wid)) * wid to bmax.y by wid do
+                for x = (floor (bmin.x / len)) * len to bmax.x by len do
+                    append tiles (MT_TlRect x y (x + len) (y + wid) g false)
+        )
+        2:
+        (
+            for y = (floor (bmin.y / wid)) * wid to bmax.y by wid do
+            (
+                local row = (floor (y / wid + 0.5)) as integer
+                local sh = mod (row * len * offPct / 100.0) len
+                for x = (floor ((bmin.x - sh) / len)) * len + sh - len to bmax.x by len do
+                    append tiles (MT_TlRect x y (x + len) (y + wid) g false)
+            )
+        )
+        3:
+        (
+            -- Parke (Floor Generator "Standard" gibi): her sıra bir öncekine göre offPct..offMax % kayar;
+            -- tahta boyu minPct..100 %, sıra genişliği minW..100 % arasında
+            local mnL = (amax 5.0 (amin 100.0 minPct)) / 100.0
+            local mnW = (amax 5.0 (amin 100.0 minW)) / 100.0
+            local o1 = amin offPct offMax, o2 = amax offPct offMax
+            local shift = random 0.0 len
+            local y = (floor (bmin.y / wid)) * wid
+            while y < bmax.y do
+            (
+                local rw = wid * (random mnW 1.0)
+                shift += len * (random o1 o2) / 100.0
+                local sh = mod shift len
+                local x = (floor ((bmin.x - sh) / len)) * len + sh - len
+                while x < bmax.x do
+                (
+                    local l = if mnL >= 0.999 then len else len * (random mnL 1.0)
+                    append tiles (MT_TlRect x y (x + l) (y + rw) g false)
+                    x += l
+                )
+                y += rw
+            )
+        )
+        4:
+        (
+            -- Balıksırtı: s*(L,-L) + k*(W,W) kafesinde yatay + dikey tahta çifti
+            local s0 = (floor ((bmin.x - bmax.y) / (2.0 * len))) as integer - 1
+            local s1 = (ceil ((bmax.x - bmin.y) / (2.0 * len))) as integer + 1
+            local k0 = (floor ((bmin.x + bmin.y) / (2.0 * wid))) as integer - (ceil (len / wid)) as integer - 2
+            local k1 = (ceil ((bmax.x + bmax.y) / (2.0 * wid))) as integer + 2
+            for s = s0 to s1 do for k = k0 to k1 do
+            (
+                local hx = s * len + k * wid, hy = -s * len + k * wid
+                if hx <= bmax.x and hx + len >= bmin.x and hy <= bmax.y and hy + wid + len >= bmin.y do
+                (
+                    append tiles (MT_TlRect hx hy (hx + len) (hy + wid) g false)
+                    append tiles (MT_TlRect hx (hy + wid) (hx + wid) (hy + wid + len) g true)
+                )
+            )
+        )
+        5:
+        (
+            -- Hasır: n tahtalık kare bloklar, dama tahtası gibi yön değiştirir
+            local nb = amax 1 ((floor (len / wid + 0.5)) as integer)
+            local bs = nb * wid
+            for qy = (floor (bmin.y / bs)) * bs to bmax.y by bs do
+                for qx = (floor (bmin.x / bs)) * bs to bmax.x by bs do
+                (
+                    local horiz = (mod ((floor (qx / bs + 0.5)) + (floor (qy / bs + 0.5))) 2) == 0
+                    for t = 0 to nb - 1 do
+                        append tiles (if horiz then MT_TlRect qx (qy + t * wid) (qx + bs) (qy + (t + 1) * wid) g false \
+                                      else MT_TlRect (qx + t * wid) qy (qx + (t + 1) * wid) (qy + bs) g true)
+                )
+        )
+    )
+    for t in tiles where t != undefined collect t
+)
+
+fn MT_TlRot p ca sa = [p.x * ca - p.y * sa, p.x * sa + p.y * ca, 0]
+
+-- Noktaları döndürüp kaydırır (döngü içindeki collect "Bad free thunk" vermesin diye ayrı fonksiyon)
+fn MT_TlXform pts ca sa off2 = (for p in pts collect (MT_TlRot p ca sa) + off2)
+
+-- Bir parçayı (dışbükey 2B çokgen) taş olarak hacimlendirir ve acc'ye ekler.
+-- acc: #(vs, fs, tvs, ids, hid). frame: #(U, V, N, düzlem uzaklığı). uvInfo: #(başlangıç, eksen, boyut, kaydırma)
+fn MT_TlEmit acc pts flags bev h frame uvInfo matId tiltInfo =
+(
+    local vs = acc[1], fs = acc[2], tvs = acc[3], ids = acc[4], hid = acc[5]
+    local axU = frame[1], axV = frame[2], axN = frame[3], axD = frame[4]
+    local uo = uvInfo[1], ua = uvInfo[2], usz = uvInfo[3], uoff = uvInfo[4], sgU = uvInfo[5], sgV = uvInfo[6]
+    local tc = tiltInfo[1], tax = tiltInfo[2], slope = tiltInfo[3]
+    local up = [-ua.y, ua.x, 0]
+    local n = pts.count
+    local rings = #(pts)
+    local zs = #(0.0)
+    if bev > 0 then
+    (
+        append rings pts; append zs (h - bev)
+        append rings (MT_TlInset pts flags bev); append zs h
+    )
+    else (append rings pts; append zs h)
+    local base = #()
+    for r = 1 to rings.count do
+    (
+        append base vs.count
+        for i = 1 to n do
+        (
+            local p = rings[r][i]
+            -- Taban halkası (r=1) yüzeyde; üstteki halkalar eğime göre yükselir / alçalır
+            local z = zs[r] + (if r > 1 then (dot (p - tc) tax) * slope else 0.0)
+            append vs (axU * p.x + axV * p.y + axN * (axD + z))
+            local lp = p - uo
+            append tvs [sgU * (dot lp ua) / usz + uoff.x, sgV * (dot lp up) / usz + uoff.y, 0]
+        )
+    )
+    -- Yan yüzler (halka r -> r+1), köşegenler gizli
+    for r = 1 to rings.count - 1 do
+        for i = 1 to n do
+        (
+            local i2 = (mod i n) as integer + 1
+            local a = base[r] + i, b = base[r] + i2, c = base[r + 1] + i2, d = base[r + 1] + i
+            append fs [a, b, c]; append ids matId; append hid 4
+            append fs [a, c, d]; append ids matId; append hid 1
+        )
+    -- Üst yüz (yelpaze), iç kenarlar gizli
+    local tb = base[rings.count]
+    for i = 2 to n - 1 do
+    (
+        append fs [tb + 1, tb + i, tb + i + 1]; append ids matId
+        append hid ((if i > 2 then 1 else 0) + (if i < n - 1 then 4 else 0))
+    )
+)
+
+-- Bir kaynak objeyi kaplar; dönüş #(bölge sayısı, taş sayısı)
+-- prm: #(desen, L, W, derz, bevel, yükseklik, sıra kayması %, parke min boy %, açı, offU, offV, yükseklik farkı %, ID sayısı,
+--        rastgele UV, ters taraf, sıra kayması max %, min genişlik %, dönme sapması °, eğim °, rastgele UV çevirme)
+fn MT_TileSurface src prm acc =
+(
+    local tmp = undefined
+    local m = undefined
+    if superClassOf src == Shape then
+    (
+        -- Kapalı spline: dolu yüzeye çevrilmiş kopyası
+        tmp = copy src
+        convertToMesh tmp
+        m = snapshotAsMesh tmp
+    )
+    else m = snapshotAsMesh src
+    if tmp != undefined do delete tmp
+
+    local pat = prm[1], len = prm[2], wid = prm[3], g = prm[4], bevel = prm[5], hgt = prm[6]
+    local ang = prm[9], offU = prm[10], offV = prm[11], hVar = prm[12], nIDs = prm[13], randUV = prm[14]
+    local nf = m.numfaces
+    local nTiles = 0, nRegions = 0
+    -- Elle yapılmış duvarlar tam düz olmayabilir (bir köşe birkaç mm oynamış): iki üçgeni ayrı bölge sayıp
+    -- taşları köşegen boyunca kesiyordu. Tolerans: 3° ve boyutun %0.2'si; bölge ortalama düzleme oturur.
+    local cosTol = cos 3.0
+    local planeTol = (distance src.min src.max) * 0.002 + 1e-3
+
+    -- Yüz normalleri / merkezleri ve kenar komşuluğu
+    local faceN = #(), faceC = #(), faceV = #()
+    for f = 1 to nf do
+    (
+        local fc = getFace m f
+        local ia = #(fc.x as integer, fc.y as integer, fc.z as integer)
+        append faceV ia
+        append faceN (getFaceNormal m f)
+        append faceC ((getVert m ia[1] + getVert m ia[2] + getVert m ia[3]) / 3.0)
+    )
+    local edgeMap = Dictionary #string
+    for f = 1 to nf do
+        for k = 1 to 3 do
+        (
+            local a = faceV[f][k], b = faceV[f][(mod k 3) as integer + 1]
+            local key = if a < b then (a as string + "_" + b as string) else (b as string + "_" + a as string)
+            if hasDictValue edgeMap key then append edgeMap[key] f else edgeMap[key] = #(f)
+        )
+
+    -- Düz bölgeler: aynı düzlemde ve kenardan bağlı yüzler
+    local regionOf = #()
+    for f = 1 to nf do append regionOf 0
+    local regions = #()
+    for f = 1 to nf where regionOf[f] == 0 and (length faceN[f]) > 0.5 do
+    (
+        local rid = regions.count + 1
+        local members = #(f)
+        regionOf[f] = rid
+        local n0 = faceN[f], d0 = dot faceN[f] faceC[f]
+        local qi = 1
+        while qi <= members.count do
+        (
+            local cf = members[qi]
+            qi += 1
+            for k = 1 to 3 do
+            (
+                local a = faceV[cf][k], b = faceV[cf][(mod k 3) as integer + 1]
+                local key = if a < b then (a as string + "_" + b as string) else (b as string + "_" + a as string)
+                for nb in edgeMap[key] where regionOf[nb] == 0 and (dot faceN[nb] n0) > cosTol and (abs ((dot n0 faceC[nb]) - d0)) < planeTol do
+                (
+                    regionOf[nb] = rid
+                    append members nb
+                )
+            )
+        )
+        -- Alan ağırlıklı ortalama düzlem (hafif eğik yüzlerde taşlar en iyi düzleme oturur)
+        local nAvg = [0, 0, 0], aSum = 0.0, dSum = 0.0
+        for mf in members do
+        (
+            local fa = meshop.getFaceArea m #{mf}
+            nAvg += faceN[mf] * fa
+            aSum += fa
+        )
+        if (length nAvg) > 1e-9 do n0 = normalize nAvg
+        for mf in members do dSum += (dot n0 faceC[mf]) * (meshop.getFaceArea m #{mf})
+        if aSum > 1e-12 do d0 = dSum / aSum
+        append regions #(n0, d0, members)
+    )
+
+    local ca = cos ang, sa = sin ang
+    local off2 = [offU, offV, 0]
+    local flipSide = prm[15]
+    local rotJit = prm[18], tiltMax = prm[19], uvFlip = prm[20]
+    for ri = 1 to regions.count do
+    (
+        local nr = normalize regions[ri][1]
+        local d0 = regions[ri][2]
+        -- Flip: taşlar yüzeyin öbür tarafına (ör. içi kaplanacak oda, normali dışa bakan duvar)
+        if flipSide do (nr = -nr; d0 = -d0)
+        local axU = if (abs nr.z) > 0.9 then normalize ([1, 0, 0] - nr * nr.x) else normalize (cross [0, 0, 1] nr)
+        local axV = cross nr axU
+        local frame = #(axU, axV, nr, d0)
+
+        -- Bölgenin 2B üçgenleri (CCW) ve kutuları
+        local tris = #(), tmin = #(), tmax = #()
+        local bmin = [1e30, 1e30, 0], bmax = [-1e30, -1e30, 0]
+        for f in regions[ri][3] do
+        (
+            local tri = #()
+            for k = 1 to 3 do
+            (
+                local p = getVert m faceV[f][k]
+                append tri [dot p axU, dot p axV, 0]
+            )
+            if (MT_TlArea tri) < 0 do tri = #(tri[1], tri[3], tri[2])
+            if (abs (MT_TlArea tri)) > 1e-9 do
+            (
+                append tris tri
+                local lo = [amin tri[1].x tri[2].x tri[3].x, amin tri[1].y tri[2].y tri[3].y, 0]
+                local hi = [amax tri[1].x tri[2].x tri[3].x, amax tri[1].y tri[2].y tri[3].y, 0]
+                append tmin lo; append tmax hi
+                bmin.x = amin bmin.x lo.x; bmin.y = amin bmin.y lo.y
+                bmax.x = amax bmax.x hi.x; bmax.y = amax bmax.y hi.y
+            )
+        )
+        if tris.count > 0 do
+        (
+            nRegions += 1
+            -- Desen uzayındaki kapsama kutusu (döndürme + kaydırmanın tersi)
+            local pmin = [1e30, 1e30, 0], pmax = [-1e30, -1e30, 0]
+            for c in #(bmin, [bmax.x, bmin.y, 0], bmax, [bmin.x, bmax.y, 0]) do
+            (
+                local q = MT_TlRot (c - off2) ca (-sa)
+                pmin.x = amin pmin.x q.x; pmin.y = amin pmin.y q.y
+                pmax.x = amax pmax.x q.x; pmax.y = amax pmax.y q.y
+            )
+            local tiles = MT_TlPattern pat pmin pmax len wid g prm[7] prm[8] prm[16] prm[17]
+            for t in tiles do
+            (
+                local tp = MT_TlXform t[1] ca sa off2
+                local tAxis = MT_TlRot t[3] ca sa
+                local tCen = (tp[1] + tp[2] + tp[3] + tp[4]) / 4.0
+                -- Tahta başına küçük rastgele dönme (merkezi etrafında)
+                if rotJit > 0 do
+                (
+                    local ja = random (-rotJit) rotJit
+                    tp = MT_TlXform (MT_TlXform tp 1.0 0.0 (-tCen)) (cos ja) (sin ja) tCen
+                    tAxis = MT_TlRot tAxis (cos ja) (sin ja)
+                )
+                local tlo = [amin tp[1].x tp[2].x tp[3].x tp[4].x, amin tp[1].y tp[2].y tp[3].y tp[4].y, 0]
+                local thi = [amax tp[1].x tp[2].x tp[3].x tp[4].x, amax tp[1].y tp[2].y tp[3].y tp[4].y, 0]
+                if not (thi.x < bmin.x or tlo.x > bmax.x or thi.y < bmin.y or tlo.y > bmax.y) do
+                (
+                    local tArea = abs (MT_TlArea tp)
+                    local pieces = #()
+                    local covered = 0.0
+                    for j = 1 to tris.count do
+                        if not (thi.x < tmin[j].x or tlo.x > tmax[j].x or thi.y < tmin[j].y or tlo.y > tmax[j].y) do
+                        (
+                            local r = MT_TlClipTri tp #(true, true, true, true) tris[j]
+                            if r[1].count >= 3 do
+                            (
+                                local a = MT_TlArea r[1]
+                                if a > tArea * 1e-5 do (append pieces r; covered += a)
+                            )
+                        )
+                    if covered > 0 do
+                    (
+                        -- Taşın tamamı yüzeydeyse bölünmüş parçalar yerine tek parça
+                        if covered >= tArea * 0.9999 do pieces = #(#(tp, #(true, true, true, true)))
+                        local th = hgt * (1.0 + (random -1.0 1.0) * hVar / 100.0)
+                        local bev = amin bevel (amin (0.45 * (amin len wid)) (0.9 * th))
+                        local mid = random 1 (amax 1 nIDs)
+                        local uoff = if randUV then [random 0.0 1.0, random 0.0 1.0, 0] else [0, 0, 0]
+                        local flU = if uvFlip and (random 0 1) == 1 then -1.0 else 1.0
+                        local flV = if uvFlip and (random 0 1) == 1 then -1.0 else 1.0
+                        local uvInfo = #(tCen, tAxis, len, uoff, flU, flV)
+                        -- Eğim: üst yüz tahta boyunca hafifçe eğilir (taban yüzeyde kalır)
+                        local slope = if tiltMax > 0 then tan (random (-tiltMax) tiltMax) else 0.0
+                        local tiltInfo = #(tCen, tAxis, slope)
+                        for pc in pieces do
+                        (
+                            local cl = MT_TlClean pc[1] pc[2] ((amin len wid) * 1e-4)
+                            -- Bevel'den dar parçaya (ince kesik şeritler) bevel uygulanmaz
+                            local pbev = if (MT_TlInRadius cl[1]) < bev * 1.5 then 0.0 else bev
+                            if cl[1].count >= 3 do MT_TlEmit acc cl[1] cl[2] pbev th frame uvInfo mid tiltInfo
+                        )
+                        nTiles += 1
+                    )
+                )
+            )
+        )
+        MaxTools_Progress (100.0 * ri / regions.count)
+    )
+    delete m
+    #(nRegions, nTiles)
+)
+
+-- acc dizilerinden mesh objesi kurar
+fn MT_TlBuildMesh acc =
+(
+    local vs = acc[1], fs = acc[2], tvs = acc[3], ids = acc[4], hid = acc[5]
+    local tm = mesh vertices:vs faces:fs materialIDs:ids
+    setNumTVerts tm tvs.count
+    for i = 1 to tvs.count do setTVert tm i tvs[i]
+    buildTVFaces tm
+    for f = 1 to fs.count do
+    (
+        setTVFace tm f fs[f]
+        setFaceSmoothGroup tm f 0
+        local hm = hid[f]
+        if (bit.and hm 1) != 0 do setEdgeVis tm f 1 false
+        if (bit.and hm 2) != 0 do setEdgeVis tm f 2 false
+        if (bit.and hm 4) != 0 do setEdgeVis tm f 3 false
+    )
+    update tm
+    tm
+)
+
+fn MT_TlOldResults h = (for s in objects where (getUserProp s "MT_TileSrc") == h collect s)
+
+fn MT_TlDecode s def = MT_DecodeLen s def
+
+-- Birimsiz ondalık sayı ("0.5", "0,5"); geçersizse 0
+fn MT_TlFloat s =
+(
+    local v = (substituteString (trimLeft (trimRight (s as string))) "," ".") as float
+    if v == undefined then 0.0 else v
+)
+
+-- Seçili yüzey(ler)i kaplar. o: panel değerleri (MT_Action toplar):
+-- #(desen, uzunluk, genişlik, derz, bevel, yükseklik, offU, offV [metin], brick %, parke min %, açı, yükseklik farkı %,
+--   ID sayısı, seed, rastgele UV, poly'ye çevir, kaynağı gizle, ters taraf,
+--   sıra kayması max %, min genişlik %, dönme sapması °, eğim °, rastgele UV çevirme, ölçek %)
+fn MT_TileGenerate o =
+(
+    -- Seçili taş sonucu varsa kaynağına dön (ayar değiştirip tekrar basmak için; kaynak gizli olsa da)
+    local srcs = #()
+    for s in selection do
+    (
+        local th = getUserProp s "MT_TileSrc"
+        if th != undefined then
+        (
+            local sn = maxOps.getNodeByHandle th
+            if sn != undefined and isValidNode sn do appendIfUnique srcs sn
+        )
+        else if (superClassOf s == GeometryClass or superClassOf s == Shape) and not (isGroupHead s) do appendIfUnique srcs s
+    )
+    -- Scale %: uzunluk ve genişlik birlikte (oran korunur); derz / bevel / kalınlık ölçeklenmez
+    local scl = (amax 1 o[24]) / 100.0
+    local len = (MT_TlDecode o[2] 0) * scl
+    local wid = (MT_TlDecode o[3] 0) * scl
+    local g = MT_TlDecode o[4] 0
+    local bevel = MT_TlDecode o[5] 0
+    local hgt = MT_TlDecode o[6] 0
+    local offU = MT_TlDecode o[7] 0
+    local offV = MT_TlDecode o[8] 0
+    if srcs.count == 0 then MaxTools_Status "Tiles  ·  Select planes, walls, floors or closed splines." type:#warn
+    else if len <= 0 or wid <= 0 or hgt <= 0 then MaxTools_Status "Tiles  ·  Length, width and height must be greater than 0 (e.g. 60cm)." type:#warn
+    else if g < 0 or g >= (amin len wid) * 0.5 then MaxTools_Status "Tiles  ·  Grout must be smaller than half of the tile size." type:#warn
+    else
+    (
+        local prm = #(o[1], len, wid, g, (amax 0 bevel), hgt, o[9], o[10], o[11], offU, offV, o[12], o[13], o[15], o[18], \
+                     o[19], o[20], (abs (MT_TlFloat o[21])), (abs (MT_TlFloat o[22])), o[23])
+        -- Kabaca taş sayısı tahmini: çok ağırsa sor
+        local area = 0.0
+        for s in srcs do
+        (
+            local sm = if superClassOf s == Shape then undefined else snapshotAsMesh s
+            if sm != undefined do (area += meshop.getFaceArea sm #{1..sm.numfaces}; delete sm)
+        )
+        local est = (area / (len * wid)) as integer
+        local go = true
+        if est > 20000 do
+            go = queryBox ("This will create about " + est as string + " tiles and may take a while.\nContinue?") title:"MaxTools"
+        if go do
+        (
+            MaxTools_Status "Tiles  ·  Generating..." type:#busy
+            seed o[14]
+            local made = #(), nReg = 0, nTil = 0
+            undo "Generate Tiles" on
+            (
+                for src in srcs do
+                (
+                    -- Bu kaynağın önceki sonucu silinir
+                    local h = src.inode.handle
+                    delete (MT_TlOldResults h)
+                    local acc = #(#(), #(), #(), #(), #())
+                    local res = MT_TileSurface src prm acc
+                    nReg += res[1]
+                    nTil += res[2]
+                    if acc[2].count > 0 do
+                    (
+                        local tm = MT_TlBuildMesh acc
+                        tm.name = src.name + "_Tiles"
+                        tm.wirecolor = color 196 172 140
+                        centerPivot tm
+                        setUserProp tm "MT_TileSrc" h
+                        if o[16] do convertTo tm Editable_Poly
+                        if o[17] do hide src
+                        append made tm
+                    )
+                )
+                if made.count > 0 do select made
+            )
+            MaxTools_Progress 100
+            redrawViews()
+            if made.count == 0 then MaxTools_Status "Tiles  ·  No flat surface found in the selection." type:#warn
+            else MaxTools_Status ("Tiles  ·  " + nTil as string + " tile(s) on " + nReg as string + " surface(s) of " + srcs.count as string + " object(s).") type:#ok
         )
     )
 )
@@ -3905,6 +4483,12 @@ fn MT_Action id =
         "instSrc":   MT_InstPickSource()
         "instMake":  MT_MakeInstances (MT_Flag "instMat")
         "instSel":   MT_SelectInstances()
+        "tlGen":     MT_TileGenerate #((MT_State "tlPat"), (MT_Text "tlLen"), (MT_Text "tlWid"), (MT_Text "tlGrout"), (MT_Text "tlBevel"), \
+                                      (MT_Text "tlHeight"), (MT_Text "tlOffU"), (MT_Text "tlOffV"), (MT_Num "tlBrick"), (MT_Num "tlMinLen"), \
+                                      (MT_Num "tlRot"), (MT_Num "tlHVar"), (MT_Num "tlIDs"), (MT_Num "tlSeed"), (MT_Flag "tlRandUV"), \
+                                      (MT_Flag "tlPoly"), (MT_Flag "tlHide"), (MT_Flag "tlFlip"), (MT_Num "tlBrickMax"), \
+                                      (MT_Num "tlMinW"), (MT_Text "tlRotJit"), (MT_Text "tlTilt"), (MT_Flag "tlUVFlip"), \
+                                      (MT_Num "tlScale"))
         "mtidRand":  MT_RandomMatIDs (MT_State "mtidMode") (MT_Num "mtidMax")
         "wcRand":    MT_RandomWirecolor (MT_State "wcScope") (MT_Flag "wcGroup")
         "uvAll":     MT_UVRandomAll()
