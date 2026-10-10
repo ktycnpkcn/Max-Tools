@@ -1,12 +1,12 @@
 ﻿-- =========================================
--- MaxTools v4.1
+-- MaxTools v4.2
 -- Hızlı modelleme araçları paketi
 -- =========================================
 
 global MT_UI, MT_UIAsm, MT_UIAsmStamp
 global MT_Version = "v4.1  ·  build 29"
 -- Online güncelleme: GitHub'daki version.json'daki build bu sayıdan büyükse güncelleme önerilir
-global MT_BuildNum = 29
+global MT_BuildNum = 30
 global MT_UpdateBase = "https://raw.githubusercontent.com/ktycnpkcn/Max-Tools/main/"
 global MT_OnUIEvent
 global MT_UFind
@@ -27,6 +27,42 @@ fn MT_DiagWrite txt =
         close f
     )
     catch()
+)
+
+-- C# kaynağını bellekte derler; Assembly ya da undefined döndürür (hatalar MaxTools_diag.txt'ye).
+-- 3ds Max 2026+ (.NET 8): CodeDom yok -> Autodesk'in CSharpUtilities.CSharpCompilationHelper'ı (Max'te yüklü
+-- tüm assembly'leri kendisi referanslar; tanım kaynağın başına #define olarak eklenir).
+-- Eski sürümler (.NET Framework): CodeDom. defs: "MAXFORM" gibi tek tanım ya da "", refs: CodeDom referansları.
+fn MT_CompileCS code defs refs tag =
+(
+    local asm = undefined
+    local helper = try (dotNetClass "CSharpUtilities.CSharpCompilationHelper") catch undefined
+    if helper != undefined then
+    (
+        try (asm = helper.Compile ((if defs != "" then "#define " + defs + "\n" else "") + code) #())
+        catch (MT_DiagWrite (tag + " compile failed (" + defs + "): " + (getCurrentException()) as string))
+    )
+    else
+    (
+        try
+        (
+            local provider = dotNetObject "Microsoft.CSharp.CSharpCodeProvider"
+            local cparams = dotNetObject "System.CodeDom.Compiler.CompilerParameters"
+            for rf in refs do cparams.ReferencedAssemblies.Add rf
+            if defs != "" do cparams.CompilerOptions = "/define:" + defs
+            cparams.GenerateInMemory = true
+            cparams.GenerateExecutable = false
+            local cr = provider.CompileAssemblyFromSource cparams #(code)
+            if cr.Errors.HasErrors then
+            (
+                for ei = 0 to cr.Errors.Count - 1 do
+                    try (MT_DiagWrite (tag + " compile error (" + defs + "): " + (cr.Errors.item[ei]).ToString())) catch()
+            )
+            else asm = cr.CompiledAssembly
+        )
+        catch (MT_DiagWrite (tag + " compile failed (" + defs + "): " + (getCurrentException()) as string))
+    )
+    asm
 )
 
 -- Önceki sürümleri kapat (eski MAXScript/.NET arayüz kalıntıları dahil)
@@ -1623,21 +1659,12 @@ fn MT_GetPacker =
             try
             (
                 local code = (dotNetClass "System.IO.File").ReadAllText src
-                local provider = dotNetObject "Microsoft.CSharp.CSharpCodeProvider"
-                local cparams = dotNetObject "System.CodeDom.Compiler.CompilerParameters"
-                cparams.ReferencedAssemblies.Add "System.dll"
-                cparams.GenerateInMemory = true
-                cparams.GenerateExecutable = false
-                local cr = provider.CompileAssemblyFromSource cparams #(code)
-                if cr.Errors.HasErrors then
-                (
-                    for ei = 0 to cr.Errors.Count - 1 do
-                        try (MT_DiagWrite ("C# compile error: " + (cr.Errors.item[ei]).ToString())) catch()
+                local asm = MT_CompileCS code "" #("System.dll") "Packer"
+                if asm == undefined then
                     format "MaxTools: C# packer failed to compile (see MaxTools_diag.txt).\n"
-                )
                 else
                 (
-                    result = cr.CompiledAssembly.CreateInstance "MTPacker"
+                    result = asm.CreateInstance "MTPacker"
                     MT_PackerObj = result
                     MT_PackerStamp = stamp
                 )
@@ -3465,29 +3492,9 @@ fn MT_GetUIAsm =
                 local useMaxForm = (attempt == 1)
                 if not (useMaxForm and not (doesFileExist maxCC)) do
                 (
-                    try
-                    (
-                        local provider = dotNetObject "Microsoft.CSharp.CSharpCodeProvider"
-                        local cparams = dotNetObject "System.CodeDom.Compiler.CompilerParameters"
-                        cparams.ReferencedAssemblies.Add "System.dll"
-                        cparams.ReferencedAssemblies.Add "System.Drawing.dll"
-                        cparams.ReferencedAssemblies.Add "System.Windows.Forms.dll"
-                        if useMaxForm do
-                        (
-                            cparams.ReferencedAssemblies.Add maxCC
-                            cparams.CompilerOptions = "/define:MAXFORM"
-                        )
-                        cparams.GenerateInMemory = true
-                        cparams.GenerateExecutable = false
-                        local cr = provider.CompileAssemblyFromSource cparams #(code)
-                        if cr.Errors.HasErrors then
-                        (
-                            for ei = 0 to cr.Errors.Count - 1 do
-                                try (MT_DiagWrite ("UI compile error (attempt " + attempt as string + "): " + (cr.Errors.item[ei]).ToString())) catch()
-                        )
-                        else asm = cr.CompiledAssembly
-                    )
-                    catch (MT_DiagWrite ("UI compile failed: " + (getCurrentException()) as string))
+                    local refs = #("System.dll", "System.Drawing.dll", "System.Windows.Forms.dll")
+                    if useMaxForm do append refs maxCC
+                    asm = MT_CompileCS code (if useMaxForm then "MAXFORM" else "") refs "UI"
                 )
             )
             if asm != undefined do

@@ -56,8 +56,9 @@
         format "        if doesFileExist p then fileIn p else messageBox (\"MaxTools.ms not found: \" + p) title:\"MaxTools\"\n" to:f
         format "    )\n" to:f
         format ")\n\n" to:f
+        format "-- Ust menu: 3ds Max 2024 ve oncesi menuMan; 2025+ yeni menu sistemi (#cuiRegisterMenus, menu acilista kurulur)\n" to:f
+        format "if menuMan != undefined then\n" to:f
         format "(\n" to:f
-        format "    -- Ust menuye MaxTools menusunu ekle (yoksa)\n" to:f
         format "    try\n" to:f
         format "    (\n" to:f
         format "        if menuMan.findMenu \"MaxTools\" == undefined do\n" to:f
@@ -70,6 +71,21 @@
         format "        )\n" to:f
         format "    )\n" to:f
         format "    catch (print (\"MaxTools: could not add menu: \" + (getCurrentException()) as string))\n" to:f
+        format ")\n" to:f
+        format "else\n" to:f
+        format "(\n" to:f
+        format "    fn MaxTools_RegisterMenu =\n" to:f
+        format "    (\n" to:f
+        format "        try\n" to:f
+        format "        (\n" to:f
+        format "            local mainBar = (callbacks.notificationParam()).mainMenuBar\n" to:f
+        format "            local sub = mainBar.CreateSubMenu \"6f1d2c3a-8b4e-4c5d-9e6f-7a8b9c0d1e21\" \"MaxTools\"\n" to:f
+        format "            sub.CreateAction \"6f1d2c3a-8b4e-4c5d-9e6f-7a8b9c0d1e22\" 647394 \"MaxTools_Open`MaxTools\"\n" to:f
+        format "        )\n" to:f
+        format "        catch (print (\"MaxTools: could not add menu: \" + (getCurrentException()) as string))\n" to:f
+        format "    )\n" to:f
+        format "    callbacks.removeScripts id:#MaxToolsMenu\n" to:f
+        format "    callbacks.addScript #cuiRegisterMenus MaxTools_RegisterMenu id:#MaxToolsMenu\n" to:f
         format ")\n\n" to:f
         format "-- Sol kenar arac cubugu (proje klasorunden; guncellemeler otomatik gelir)\n" to:f
         format "try (fileIn @\"%\") catch (print (\"MaxTools: could not load side bar: \" + (getCurrentException()) as string))\n" (dir + "MaxTools_SideBar.ms") to:f
@@ -79,7 +95,8 @@
         fileIn startupFile
 
         messageBox ("MaxTools installed.\n\n" + \
-                    "• A 'MaxTools' menu was added to the main menu bar.\n" + \
+                    "• A 'MaxTools' menu was added to the main menu bar\n" + \
+                    "   (3ds Max 2025 and newer: it appears after restarting 3ds Max).\n" + \
                     "• Icon installed (" + copied as string + " files). To add it to a toolbar:\n" + \
                     "   Customize > Customize User Interface > Toolbars > Category: MaxTools\n" + \
                     "   and drag 'MaxTools' onto any toolbar.\n" + \

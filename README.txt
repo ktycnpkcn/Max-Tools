@@ -1,4 +1,4 @@
-MAX TOOLS  v4.1
+MAX TOOLS  v4.2
 Fast modeling, UV and game-ready tools for Autodesk 3ds Max 2024+
 ===================================================================
 
@@ -53,9 +53,14 @@ Manual update: replace the files in this folder with the new versions. No reinst
 
 UNINSTALL
 ---------
-Delete this file and restart 3ds Max:
-   <3ds Max user scripts>\Startup\MaxTools_Startup.ms
-(The exact path is shown at the end of the installation.)
+1. Drag "MaxTools_Uninstall.ms" into a viewport (or Scripting > Run Script...).
+   It removes the panel, the side bar, the startup script, the menu, the toolbar action,
+   the icons and the MaxTools settings.
+2. Restart 3ds Max.
+3. Remove the MaxTools button from your toolbars / hotkeys if you added it, then delete
+   the MaxTools folder.
+
+Manual way: delete <3ds Max user scripts>\Startup\MaxTools_Startup.ms and restart 3ds Max.
 
 FILES
 -----
@@ -64,6 +69,7 @@ MaxToolsUI.cs          The panel interface (compiled inside 3ds Max)
 MaxToolsPacker.cs      Shape-based UV packer core (compiled inside 3ds Max)
 MaxTools_SideBar.ms    Left side bar with the MaxTools button
 MaxTools_Install.ms    Installer (run once)
+MaxTools_Uninstall.ms  Uninstaller
 icons\                 Toolbar and side bar icons
 
 FEATURES

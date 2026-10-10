@@ -46,6 +46,16 @@ yüklediği kurulumdur. Üst klasördeki (`D:\3Ds Max Element Detach\*.ms|*.cs`)
   Generate eskisini silip yeniden üretir. Yuvarlak = renderable spline, Flat = elle kurulan mesh (bant yönü kontrol için).
   C#↔MAXScript: `CableSetRoutes/CableSetList/CableShow`, değer değişince `cblSet` (`CableArg 0/1`). Panel öne gelince liste yenilenir.
 - C#'ta `HashSet` YOK (Max'in CodeDom'u System.Core eklemiyor) → `List`/`Dictionary` kullan.
+- **3ds Max 2026+ .NET 8 kullanır: CodeDom yok** ("Operation is not supported on this platform"). Derleme `MT_CompileCS`
+  üzerinden: 2026+ `CSharpUtilities.CSharpCompilationHelper.Compile code #()` (yüklü tüm assembly'leri referanslar;
+  MAXFORM kaynağın başına `#define` ile eklenir), eskiler CodeDom. C# kodu iki ortamda da derlenmeli:
+  .NET 8'de `MethodInvoker` belirsiz → `System.Windows.Forms.MethodInvoker` yaz; WebClient yalnızca uyarı verir.
+- **Yazı tipleri piksel cinsinden (`PxFont`, `new Font` kullanma):** yerleşim sabit piksel; punto yazılar Windows
+  ölçeklemesinde (125/150%) büyüyüp kutulardan taşıyordu.
+- 2025+ `menuMan` yok → başlatıcı menüyü `#cuiRegisterMenus` callback'iyle kurar (`CreateSubMenu`/`CreateAction ... 647394
+  "MaxTools_Open`MaxTools"`), menü Max yeniden açılınca görünür.
+- Bu bilgisayarda 3ds Max 2026 da kurulu: `C:\Program Files\Autodesk\3ds Max 2026\3dsmaxbatch.exe <test.ms>` ile
+  arayüzsüz MAXScript çalıştırıp .NET 8 derlemesi test edilebilir (sonucu dosyaya yazdır).
 
 ## MAXScript tuzakları (hepsi yaşandı)
 - Büyük/küçük harf duyarsız: `fE`=`fe`, `fN`=`fn`. Anahtar kelime/sınıf adı değişken olmaz (`mapped`, `box`, `path`, `index`, `color`...).

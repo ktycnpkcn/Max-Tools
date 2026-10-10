@@ -64,7 +64,7 @@ foreach ($pair in @(@("MaxToolsUI.cs", @("System.dll", "System.Drawing.dll", "Sy
 }
 
 # 6) BOM
-foreach ($f in "MaxTools.ms", "MaxTools_SideBar.ms", "MaxTools_Install.ms") {   # .cs dosyalarini .NET zaten UTF-8 okur
+foreach ($f in "MaxTools.ms", "MaxTools_SideBar.ms", "MaxTools_Install.ms", "MaxTools_Uninstall.ms") {   # .cs dosyalarini .NET zaten UTF-8 okur
   $b = [System.IO.File]::ReadAllBytes((Join-Path $root $f))
   $hasBom = ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
   $nonAscii = @($b | ? { $_ -gt 127 }).Count -gt 0   # saf ASCII dosyada BOM gerekmez

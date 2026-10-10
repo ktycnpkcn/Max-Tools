@@ -1,13 +1,14 @@
 {
-  "version": "4.1",
-  "build": 29,
-  "notes": "New Reset XForm tool (Modeling page): works on the selection or the whole scene, including objects inside groups.",
+  "version": "4.2",
+  "build": 30,
+  "notes": "3ds Max 2025 / 2026 support (.NET 8 compiler, new menu system), fixed text overflow on scaled displays (125% / 150%), new MaxTools_Uninstall.ms.",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",
     "MaxToolsPacker.cs",
     "MaxTools_SideBar.ms",
     "MaxTools_Install.ms",
+    "MaxTools_Uninstall.ms",
     "README.txt",
     "icons/MaxTools_16a.bmp",
     "icons/MaxTools_16i.bmp",

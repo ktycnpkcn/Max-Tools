@@ -483,7 +483,7 @@ public class MTForm : Form
         th.Start();
     }
 
-    void RunOnUI(MethodInvoker m)
+    void RunOnUI(System.Windows.Forms.MethodInvoker m)
     {
         try { if (IsHandleCreated && !IsDisposed) BeginInvoke(m); } catch { }
     }
@@ -885,7 +885,7 @@ public class MTForm : Form
         cblList.BorderStyle = BorderStyle.None;
         cblList.BackColor = cInput;
         cblList.ForeColor = cText;
-        cblList.Font = new Font("Segoe UI", 9f);
+        cblList.Font = PxFont("Segoe UI", 9f);
         cblList.IntegralHeight = false;
         cblList.DrawMode = DrawMode.OwnerDrawFixed;
         cblList.ItemHeight = 24;
@@ -1079,14 +1079,14 @@ public class MTForm : Form
         m.Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors());
         m.ShowImageMargin = false;
         m.BackColor = cCard;
-        m.Font = new Font("Segoe UI", 9f);
+        m.Font = PxFont("Segoe UI", 9f);
         int cur = states["cblRoute"];
         foreach (int r in cblRouteNums)
         {
             int rr = r;
             ToolStripMenuItem it = new ToolStripMenuItem("Route " + r);
             it.ForeColor = r == cur ? Color.White : cText;
-            if (r == cur) it.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            if (r == cur) it.Font = PxFont("Segoe UI", 9f, FontStyle.Bold);
             it.AutoSize = false;
             it.Size = new Size(cblRouteBox.Width, 26);
             it.Click += delegate { SelectRoute(rr); };
@@ -1193,6 +1193,11 @@ public class MTForm : Form
     }
 
     // ================= Kontroller =================
+    // Yazı tipleri piksel cinsinden: Windows ölçekleme (125% / 150%) yazıları büyütüp sabit boyutlu kutulardan
+    // taşırmasın. Boyut 96 DPI'daki punto karşılığıdır (9 pt = 12 px), yani %100'deki görünüm aynen korunur.
+    static Font PxFont(string family, float pt) { return PxFont(family, pt, FontStyle.Regular); }
+    static Font PxFont(string family, float pt, FontStyle style) { return new Font(family, pt * 96f / 72f, style, GraphicsUnit.Pixel); }
+
     static void Round(Control c, int r)
     {
         int w = c.Width, h = c.Height, d = r * 2;
@@ -1225,7 +1230,7 @@ public class MTForm : Form
         l.UseMnemonic = false;
         l.SetBounds(x, y, w, h);
         l.Text = txt;
-        l.Font = new Font(family ?? "Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular);
+        l.Font = PxFont(family ?? "Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular);
         l.ForeColor = col;
         l.BackColor = Color.Transparent;
         l.TextAlign = align;
@@ -1348,7 +1353,7 @@ public class MTForm : Form
         t.BorderStyle = BorderStyle.None;
         t.BackColor = cInput;
         t.ForeColor = cText;
-        t.Font = new Font("Segoe UI", 9.5f);
+        t.Font = PxFont("Segoe UI", 9.5f);
         t.SetBounds(9, 6, w - 18, 18);
         HookFocus(t);
         HookCommit(t, name);
@@ -1372,7 +1377,7 @@ public class MTForm : Form
         t.BorderStyle = BorderStyle.None;
         t.BackColor = cInput;
         t.ForeColor = cText;
-        t.Font = new Font("Segoe UI", 9.5f);
+        t.Font = PxFont("Segoe UI", 9.5f);
         t.TextAlign = HorizontalAlignment.Center;
         t.SetBounds(26, 6, w - 52, 18);
         t.Text = val.ToString();
@@ -1407,7 +1412,7 @@ public class MTForm : Form
         c.FlatStyle = FlatStyle.Flat;
         c.BackColor = cInput;
         c.ForeColor = cText;
-        c.Font = new Font("Segoe UI", 9f);
+        c.Font = PxFont("Segoe UI", 9f);
         c.SetBounds(x, y + 2, w, 24);
         c.DrawMode = DrawMode.OwnerDrawFixed;
         c.Items.AddRange(items);
