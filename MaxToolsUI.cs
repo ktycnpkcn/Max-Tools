@@ -172,7 +172,7 @@ public class MTForm : Form
     // Duyarlı yerleşim
     Panel root, side, hdr, sb, logo;
     Label lblApp, lblVer, lblMenu, lblFooter, closeBtn, updBtn;
-    readonly List<Panel>[] pageCards = MakeCardLists();
+    readonly List<Control>[] pageCards = MakeCardLists();
     int buildingPage = 1;
     double lastPct;
     bool compact;
@@ -208,10 +208,10 @@ public class MTForm : Form
     };
     static readonly int[] PageIcons = new int[] { 0xE70F, 0xE8A9, 0xE8AC, 0xE7FC, 0xE71B };
 
-    static List<Panel>[] MakeCardLists()
+    static List<Control>[] MakeCardLists()
     {
-        List<Panel>[] a = new List<Panel>[PageCount];
-        for (int i = 0; i < PageCount; i++) a[i] = new List<Panel>();
+        List<Control>[] a = new List<Control>[PageCount];
+        for (int i = 0; i < PageCount; i++) a[i] = new List<Control>();
         return a;
     }
 
@@ -300,7 +300,8 @@ public class MTForm : Form
             foreach (Control c in new Control[] { nav, ico, txt })
             {
                 c.Cursor = Cursors.Hand;
-                c.Click += delegate { ShowPage(idx); };
+                // Aktif sayfaya tekrar tıklamak bölüm listesini açar / kapar
+                c.Click += delegate { if (page == idx) ToggleNavOpen(idx - 1); else ShowPage(idx); };
                 c.MouseEnter += delegate { if (page != idx) AnimColor(nav, cNavHover); };
                 c.MouseLeave += delegate { if (page != idx) AnimColor(nav, cSide); };
             }
@@ -340,6 +341,7 @@ public class MTForm : Form
         BuildNamePage();
         BuildGamePage();
         BuildCablePage();
+        BuildNavSubs();
 
         // Durum çubuğu
         sb = Pnl(root, 190, 564, 668, 34, cSide, 0);
@@ -632,9 +634,19 @@ public class MTForm : Form
     }
 
     // ================= Sayfalar =================
+    // Odak değişince (ör. panel viewport'tan geri dönünce son metin kutusuna odak verilince) WinForms sayfayı
+    // o kontrole kaydırıyordu; tıklanan buton imlecin altından kayıp çalışmıyordu. Otomatik kaydırma kapalı.
+    class NoJumpPanel : Panel
+    {
+        protected override Point ScrollToControl(Control activeControl) { return DisplayRectangle.Location; }
+    }
+
     Panel NewPage(int idx)
     {
-        Panel pg = Pnl(content, 0, 0, 668, 500, cBg, 0);
+        Panel pg = new NoJumpPanel();
+        pg.SetBounds(0, 0, 668, 500);
+        pg.BackColor = cBg;
+        content.Controls.Add(pg);
         pg.Dock = DockStyle.Fill;
         pg.AutoScroll = true;
         pg.AutoScrollMargin = new Size(0, 16);
@@ -670,6 +682,7 @@ public class MTForm : Form
             navIco[i].Left = compact ? 2 : 8;
             navTxt[i].Visible = !compact;
         }
+        LayoutNav();
 
         int mainW = W - sideW;
         hdr.SetBounds(sideW, 0, mainW, 64);
@@ -690,24 +703,61 @@ public class MTForm : Form
     void LayoutCards(int p)
     {
         Panel pg = pages[p];
-        List<Panel> cards = pageCards[p];
-        if (pg == null || cards.Count == 0) return;
+        List<Control> items = pageCards[p];
+        if (pg == null || items.Count == 0) return;
 
         // Önce kaydırma çubuğu yokmuş gibi yerleştir; içerik taşıyorsa çubuk payını düşüp tekrar yerleştir
         int full = content.ClientSize.Width;
-        int needH = PlaceCards(pg, cards, full, true);
+        int needH = PlaceCards(pg, items, full, true);
         if (needH > content.ClientSize.Height)
-            PlaceCards(pg, cards, full - SystemInformation.VerticalScrollBarWidth, false);
+            PlaceCards(pg, items, full - SystemInformation.VerticalScrollBarWidth, false);
         else
-            PlaceCards(pg, cards, full, false);
+            PlaceCards(pg, items, full, false);
     }
 
-    // Kartları verilen genişliğe yerleştirir; dryRun ise sadece gereken yüksekliği hesaplar
-    int PlaceCards(Panel pg, List<Panel> cards, int avail, bool dryRun)
+    // Bölüm bloğu: başlık (yoksa null) + altındaki kartlar
+    class CardBlock
     {
-        int cols = (avail - 2 * CardMargin + CardGap) / (CardW + CardGap);
-        cols = Math.Max(1, Math.Min(cols, cards.Count));
-        int totalW = cols * CardW + (cols - 1) * CardGap;
+        public Control Header;
+        public List<Control> Cards = new List<Control>();
+        public int Span;
+    }
+
+    // Kartları (ve varsa bölüm başlıklarını) verilen genişliğe yerleştirir; dryRun ise sadece gereken yüksekliği hesaplar.
+    // Her bölüm (başlık + kartları) bir bloktur; bloklar sığdığı kadar yan yana satırlara dizilir, başlık yalnızca
+    // kendi bloğunun genişliğindedir. Bölümsüz sayfa tek bir blok gibi davranır (eski düzen).
+    int PlaceCards(Panel pg, List<Control> items, int avail, bool dryRun)
+    {
+        List<CardBlock> blocks = new List<CardBlock>();
+        CardBlock cur = new CardBlock();
+        int totalCards = 0;
+        foreach (Control it in items)
+        {
+            if (IsSection(it))
+            {
+                if (cur.Header != null || cur.Cards.Count > 0) blocks.Add(cur);
+                cur = new CardBlock();
+                cur.Header = it;
+            }
+            else { cur.Cards.Add(it); totalCards++; }
+        }
+        if (cur.Header != null || cur.Cards.Count > 0) blocks.Add(cur);
+
+        int fit = Math.Max(1, (avail - 2 * CardMargin + CardGap) / (CardW + CardGap));
+        int cols = Math.Max(1, Math.Min(fit, Math.Max(1, totalCards)));
+
+        // Satırlara dağıt: blok genişliği = kart sayısı (sütun sayısını aşamaz)
+        List<List<CardBlock>> rows = new List<List<CardBlock>>();
+        int used = cols, usedMax = 1;
+        foreach (CardBlock b in blocks)
+        {
+            b.Span = Math.Max(1, Math.Min(b.Cards.Count, cols));
+            if (used + b.Span > cols) { rows.Add(new List<CardBlock>()); used = 0; }
+            rows[rows.Count - 1].Add(b);
+            used += b.Span;
+            usedMax = Math.Max(usedMax, used);
+        }
+        int totalW = usedMax * CardW + (usedMax - 1) * CardGap;
         int x0 = Math.Max(CardMargin, (avail - totalW) / 2);
 
         Point scroll = Point.Empty;
@@ -716,57 +766,232 @@ public class MTForm : Form
             scroll = pg.AutoScrollPosition;
             pg.AutoScrollPosition = Point.Empty;
         }
-        int[] colH = new int[cols];
-        for (int k = 0; k < cols; k++) colH[k] = 8;
-        foreach (Panel c in cards)
+        int y = 8;
+        foreach (List<CardBlock> row in rows)
         {
-            int k;
-            // 2 sütunda tasarımdaki sütun düzeni korunur; diğerlerinde en kısa sütuna yerleşir
-            if (cols == 2) k = ((int)c.Tag) - 1;
-            else
+            int rowBottom = y, colStart = 0;
+            foreach (CardBlock b in row)
             {
-                k = 0;
-                for (int j = 1; j < cols; j++) if (colH[j] < colH[k]) k = j;
+                int bx = x0 + colStart * (CardW + CardGap);
+                int bw = b.Span * CardW + (b.Span - 1) * CardGap;
+                int top = y;
+                if (b.Header != null)
+                {
+                    if (!dryRun) b.Header.SetBounds(bx, top, bw, SectionH);
+                    top += SectionH + 4;
+                }
+                int[] colH = new int[b.Span];
+                for (int k = 0; k < b.Span; k++) colH[k] = top;
+                foreach (Control c in b.Cards)
+                {
+                    int col;
+                    // 2 sütunlu blokta tasarımdaki sütun tercihi korunur; diğerlerinde en kısa sütun
+                    if (b.Span == 2 && c.Tag is int) col = Math.Min(1, Math.Max(0, ((int)c.Tag) - 1));
+                    else
+                    {
+                        col = 0;
+                        for (int j = 1; j < b.Span; j++) if (colH[j] < colH[col]) col = j;
+                    }
+                    if (!dryRun) c.Location = new Point(bx + col * (CardW + CardGap), colH[col]);
+                    colH[col] += c.Height + 16;
+                }
+                foreach (int h in colH) rowBottom = Math.Max(rowBottom, h);
+                colStart += b.Span;
             }
-            if (!dryRun) c.Location = new Point(x0 + k * (CardW + CardGap), colH[k]);
-            colH[k] += c.Height + 16;
+            y = rowBottom + 8;
         }
         if (!dryRun) pg.AutoScrollPosition = new Point(-scroll.X, -scroll.Y);
-        int maxH = 0;
-        foreach (int h in colH) maxH = Math.Max(maxH, h);
-        return maxH;
+        return y - 8;
+    }
+
+    // ----- Bölüm başlıkları -----
+    const int SectionH = 30;
+    static bool IsSection(Control c) { return c.Tag is string && (string)c.Tag == "section"; }
+
+    // Sayfada bir bölüm başlığı açar; sonraki Card'lar bu bölüme girer
+    Panel Section(Panel pg, string titleTxt)
+    {
+        Panel s = new Panel();
+        s.Tag = "section";
+        s.BackColor = cBg;
+        string txt = titleTxt.ToUpperInvariant();
+        Font f = PxFont("Segoe UI", 8f, FontStyle.Bold);
+        s.Paint += delegate (object o, PaintEventArgs e)
+        {
+            // NoPrefix: "&" kısayol işareti sayılıp alt çizgiye dönmesin
+            Size ts = TextRenderer.MeasureText(e.Graphics, txt, f, Size.Empty, TextFormatFlags.NoPrefix);
+            int ty = (s.Height - ts.Height) / 2 + 2;
+            using (SolidBrush ac = new SolidBrush(cAccent))
+                e.Graphics.FillRectangle(ac, 2, ty + 3, 6, 6);
+            TextRenderer.DrawText(e.Graphics, txt, f, new Point(14, ty - 1), cMuted, TextFormatFlags.NoPrefix);
+            using (Pen pen = new Pen(cBorder))
+                e.Graphics.DrawLine(pen, 14 + ts.Width + 6, s.Height / 2 + 2, s.Width - 2, s.Height / 2 + 2);
+        };
+        s.Resize += delegate { s.Invalidate(); };
+        pg.Controls.Add(s);
+        s.AccessibleName = titleTxt;
+        pageCards[buildingPage - 1].Add(s);
+        pageSections[buildingPage - 1].Add(s);
+        return s;
+    }
+
+    // ----- Sol menüde bölüm kısayolları -----
+    // Aktif sayfanın altında o sayfanın bölümleri listelenir; tıklayınca sayfa o bölüme kayar.
+    readonly List<Panel>[] pageSections = MakePanelLists();
+    readonly List<Panel>[] navSubs = MakePanelLists();
+    readonly Label[] navChev = new Label[PageCount];
+    readonly bool[] navOpen = new bool[] { true, true, true, true, true };
+    Panel scrollPg;
+    int scrollTarget;
+
+    static List<Panel>[] MakePanelLists()
+    {
+        List<Panel>[] a = new List<Panel>[PageCount];
+        for (int i = 0; i < PageCount; i++) a[i] = new List<Panel>();
+        return a;
+    }
+
+    // Sayfalar kurulduktan sonra: her bölüm için menüde bir alt madde ve sayfa adının yanında aç/kapa oku
+    void BuildNavSubs()
+    {
+        for (int i = 0; i < PageCount; i++)
+        {
+            int pi = i;
+            foreach (Panel sec in pageSections[i])
+            {
+                Panel target = sec;
+                Panel row = Pnl(side, 12, 0, 166, 26, cSide, 7);
+                Pnl(row, 27, 4, 1, 18, cBorder, 0);   // girinti çizgisi
+                Label l = Lbl(row, sec.AccessibleName, 40, 0, 124, 26, 8.5f, false, cMuted, ContentAlignment.MiddleLeft, null);
+                row.Visible = false;
+                foreach (Control c in new Control[] { row, l })
+                {
+                    c.Cursor = Cursors.Hand;
+                    c.MouseEnter += delegate { AnimColor(row, cNavHover); l.ForeColor = cText; };
+                    c.MouseLeave += delegate { AnimColor(row, cSide); l.ForeColor = cMuted; };
+                    c.Click += delegate { ScrollToSection(pi, target); };
+                }
+                navSubs[i].Add(row);
+            }
+            if (navSubs[i].Count > 0)
+            {
+                Label ch = Lbl(navs[i], "▾", 138, 0, 24, 40, 8f, false, cFaint, ContentAlignment.MiddleCenter, null);
+                ch.Cursor = Cursors.Hand;
+                ch.Click += delegate { if (page == pi + 1) ToggleNavOpen(pi); else ShowPage(pi + 1); };
+                navChev[i] = ch;
+            }
+        }
+    }
+
+    // Menü öğelerini dikey dizer: aktif ve açık sayfanın bölümleri kendi adının altına girer
+    void LayoutNav()
+    {
+        int y = 102;
+        for (int i = 0; i < PageCount; i++)
+        {
+            topTo.Remove(navs[i]);
+            navs[i].Top = y;
+            y += 46;
+            bool open = !compact && navOpen[i] && page == i + 1;
+            foreach (Panel row in navSubs[i])
+            {
+                row.Visible = open;
+                if (open) { row.Top = y - 6; y += 28; }
+            }
+            if (open && navSubs[i].Count > 0) y += 4;
+            if (navChev[i] != null)
+            {
+                navChev[i].Visible = !compact;
+                navChev[i].Text = (navOpen[i] && page == i + 1) ? "▾" : "▸";
+            }
+        }
+    }
+
+    void ToggleNavOpen(int i)
+    {
+        if (navSubs[i].Count == 0) return;
+        navOpen[i] = !navOpen[i];
+        LayoutNav();
+        AnimTop(indicator, navs[page - 1].Top + 10);
+    }
+
+    void ScrollToSection(int p, Panel sec)
+    {
+        if (page != p + 1) ShowPage(p + 1);
+        Panel pg = pages[p];
+        // Top kaydırılmış konuma göredir; mutlak konum = Top + kaydırma miktarı
+        scrollTarget = Math.Max(0, sec.Top - pg.AutoScrollPosition.Y - 4);
+        scrollPg = pg;
+        anim.Start();
     }
 
     void BuildModelPage()
     {
         Panel pg = NewPage(1);
-        Panel c = Card(pg, 1, "Element Detacher", "Splits each element into its own object, centers pivots", 114);
+
+        // Parçalama / birleştirme / gruplama
+        Section(pg, "Split & Merge");
+        Panel c = Card(pg, 1, "Attach / Detach", "Meshes and splines: split apart or merge into one", 202);
         Btn(c, "Detach Elements", 16, 62, 273, 36, "detach", true);
+        Btn(c, "Attach + Center Pivot", 16, 106, 273, 36, "attach", false);
+        Btn(c, "Detach Splines", 16, 150, 132, 36, "splDetach", false);
+        Btn(c, "Attach Splines", 157, 150, 132, 36, "splAttach", false);
 
-        c = Card(pg, 1, "Cross-Scene Copy / Paste", "Move objects between Max sessions", 114);
-        Btn(c, "Copy", 16, 62, 132, 36, "copy", false);
-        Btn(c, "Paste", 157, 62, 132, 36, "paste", false);
+        // Gruplar
+        Section(pg, "Group");
+        c = Card(pg, 1, "Group", "The new group is selected right away", 202);
+        Btn(c, "Group", 16, 62, 132, 36, "group", true);
+        Btn(c, "Ungroup", 157, 62, 132, 36, "ungroup", false);
+        Btn(c, "Open", 16, 106, 132, 36, "grpOpen", false);
+        Btn(c, "Open Recursively", 157, 106, 132, 36, "grpOpenR", false);
+        Btn(c, "Close", 16, 150, 273, 36, "grpClose", false);
 
-        c = Card(pg, 1, "UV Shifter", "Randomly offset UVs to break texture tiling", 114);
-        Btn(c, "All Elements", 16, 62, 132, 36, "uvAll", false);
-        Btn(c, "Selected Elements", 157, 62, 132, 36, "uvSel", false);
-
+        // Dönüşüm ve konum (ileride pivot araçları da buraya)
+        Section(pg, "Transform");
         c = Card(pg, 1, "Reset XForm", "Also works on objects inside groups", 212);
         Segment(c, 16, 62, 273, "rxScope", new string[] { "Selection", "Whole Scene" }, 1);
         Toggle(c, 16, 100, 273, "rxGroups", "Include objects inside groups", true);
         Toggle(c, 16, 128, 273, "rxCollapse", "Collapse (if no other modifiers)", true);
         Btn(c, "Reset XForm", 16, 162, 273, 36, "rxReset", true);
 
-        c = Card(pg, 2, "Quick Merge", "Group or merge into one object", 158);
-        Btn(c, "Auto Group", 16, 62, 273, 36, "group", false);
-        Btn(c, "Attach + Center Pivot", 16, 106, 273, 36, "attach", false);
-
-        c = Card(pg, 2, "Reference Image", "Creates a textured plane with correct aspect ratio", 114);
-        Btn(c, "Pick Image and Add to Scene", 16, 62, 273, 36, "ref", false);
-
         c = Card(pg, 2, "Drop to Ground", "Groups are treated as a single object", 152);
         Segment(c, 16, 62, 273, "dropMode", new string[] { "World Z = 0", "Surface Below" }, 1);
         Btn(c, "Drop to Ground", 16, 100, 273, 36, "drop", true);
+
+        // UV
+        Section(pg, "UV");
+        c = Card(pg, 1, "UVW Map", "Preset type and size in one click", 224);
+        Segment(c, 16, 62, 273, "uvwType", new string[] { "Box", "Planar", "Cylinder", "Sphere" }, 1);
+        Segment(c, 16, 100, 273, "uvwSize", new string[] { "100", "200", "300", "Custom" }, 1);
+        Muted(c, "Custom size", 16, 136, 130, 28);
+        Num(c, 157, 136, "uvwCustom", 150, 1, 99999, 132);
+        Btn(c, "Apply UVW Map", 16, 172, 273, 36, "uvwApply", true);
+
+        c = Card(pg, 2, "UV Shifter", "Randomly offset UVs to break texture tiling", 114);
+        Btn(c, "All Elements", 16, 62, 132, 36, "uvAll", false);
+        Btn(c, "Selected Elements", 157, 62, 132, 36, "uvSel", false);
+
+        // Materyal ID ve görünüm rengi
+        Section(pg, "Material & Color");
+        c = Card(pg, 1, "Random Material ID", "Random IDs per element or per object", 188);
+        Segment(c, 16, 62, 273, "mtidMode", new string[] { "Per Element", "Per Object" }, 1);
+        Muted(c, "IDs from 1 to", 16, 100, 130, 28);
+        Num(c, 157, 100, "mtidMax", 5, 1, 100, 132);
+        Btn(c, "Randomize IDs", 16, 136, 273, 36, "mtidRand", true);
+
+        c = Card(pg, 2, "Random Wirecolor", "Readable random object colors", 186);
+        Segment(c, 16, 62, 273, "wcScope", new string[] { "Selection", "Whole Scene" }, 1);
+        Toggle(c, 16, 100, 273, "wcGroup", "Same color inside a group", true);
+        Btn(c, "Random Wirecolor", 16, 134, 273, 36, "wcRand", true);
+
+        // Sahne yardımcıları
+        Section(pg, "Scene");
+        c = Card(pg, 1, "Cross-Scene Copy / Paste", "Move objects between Max sessions", 114);
+        Btn(c, "Copy", 16, 62, 132, 36, "copy", false);
+        Btn(c, "Paste", 157, 62, 132, 36, "paste", false);
+
+        c = Card(pg, 2, "Reference Image", "Creates a textured plane with correct aspect ratio", 114);
+        Btn(c, "Pick Image and Add to Scene", 16, 62, 273, 36, "ref", false);
     }
 
     void BuildUVPage()
@@ -1215,6 +1440,7 @@ public class MTForm : Form
         ActiveControl = null;
         title.Text = PageInfo[i - 1][0];
         subtitle.Text = PageInfo[i - 1][1];
+        LayoutNav();
         AnimTop(indicator, navs[i - 1].Top + 10);
         if (i == CablePage) CableRefreshLater();
     }
@@ -1577,6 +1803,15 @@ public class MTForm : Form
             c.Top = Step(c.Top, topTo[c]);
             if (c.Top == topTo[c]) topTo.Remove(c);
         }
-        if (colorTo.Count == 0 && leftTo.Count == 0 && topTo.Count == 0) anim.Stop();
+        // Bölüme yumuşak kaydırma
+        if (scrollPg != null)
+        {
+            int cur = -scrollPg.AutoScrollPosition.Y;
+            int nx = Step(cur, scrollTarget);
+            scrollPg.AutoScrollPosition = new Point(0, nx);
+            int now = -scrollPg.AutoScrollPosition.Y;
+            if (now == scrollTarget || now == cur) scrollPg = null;   // hedefe vardı ya da daha fazla kaymıyor (sayfa sonu)
+        }
+        if (colorTo.Count == 0 && leftTo.Count == 0 && topTo.Count == 0 && scrollPg == null) anim.Stop();
     }
 }

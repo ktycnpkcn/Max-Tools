@@ -1,4 +1,4 @@
-MAX TOOLS  v4.2
+MAX TOOLS  v4.3
 Fast modeling, UV and game-ready tools for Autodesk 3ds Max 2024+
 ===================================================================
 
@@ -74,15 +74,26 @@ icons\                 Toolbar and side bar icons
 
 FEATURES
 --------
-Modeling
-   Element Detacher       Splits each element into its own object, centers pivots
-   Cross-Scene Copy/Paste Move objects between 3ds Max sessions
-   UV Shifter             Randomly offsets UVs per element to break texture tiling
-   Quick Merge            Auto group, or attach everything into one object
-   Reference Image        Textured plane with the image's aspect ratio
-   Drop to Ground         Puts objects or whole groups on Z=0 or on the surface below
+Modeling  (sections; jump to a section from the left menu)
+ Split & Merge
+   Attach / Detach        Detach elements into objects, attach + center pivot,
+                          detach / attach splines
+ Group
+   Group                  Group (new group is selected), Ungroup, Open, Open Recursively, Close
+ Transform
    Reset XForm            Selection or whole scene, also objects inside groups; fixes mirrored
                           normals, makes instances unique, keeps other modifiers
+   Drop to Ground         Puts objects or whole groups on Z=0 or on the surface below
+ UV
+   UVW Map                Box / Planar / Cylinder / Sphere with preset sizes (100/200/300/custom);
+                          updates an existing UVW Map on top instead of stacking a new one
+   UV Shifter             Randomly offsets UVs per element to break texture tiling
+ Material & Color
+   Random Material ID     Random IDs per element or per object (use with Multi/Sub-Object)
+   Random Wirecolor       Selection or whole scene, same color inside a group
+ Scene
+   Cross-Scene Copy/Paste Move objects between 3ds Max sessions
+   Reference Image        Textured plane with the image's aspect ratio
 
 UV  (works on an Unwrap UVW modifier)
    Seams                  Mark / remove / clear seams, unwrap from seams

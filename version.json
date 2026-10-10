@@ -1,7 +1,7 @@
 {
-  "version": "4.2.1",
-  "build": 31,
-  "notes": "Fixes: correct version label in the panel, faster and safer MAXScript connection in 3ds Max 2026.",
+  "version": "4.3",
+  "build": 32,
+  "notes": "Modeling page in sections with shortcuts in the left menu. New: Group tools (Ungroup, Open, Open Recursively, Close), spline attach / detach, UVW Map presets, Random Material ID, Random Wirecolor. Fix: page no longer jumps when clicking a button.",
   "files": [
     "MaxTools.ms",
     "MaxToolsUI.cs",

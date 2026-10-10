@@ -4,9 +4,9 @@
 -- =========================================
 
 global MT_UI, MT_UIAsm, MT_UIAsmStamp
-global MT_Version = "v4.2.1  ·  build 31"
+global MT_Version = "v4.3  ·  build 32"
 -- Online güncelleme: GitHub'daki version.json'daki build bu sayıdan büyükse güncelleme önerilir
-global MT_BuildNum = 31
+global MT_BuildNum = 32
 global MT_UpdateBase = "https://raw.githubusercontent.com/ktycnpkcn/Max-Tools/main/"
 global MT_OnUIEvent
 global MT_UFind
@@ -189,12 +189,14 @@ fn MT_Group =
         undo "Quick Group" on
         (
             local newName = uniqueName "QuickGroup_"
-            group selection name:newName
-            MaxTools_Status ("Merge  ·" + newName + " created.") type:#ok
+            local g = group selection name:newName
+            -- Yeni grubu seç (yoksa sahnede ayrıca tıklamak gerekiyordu)
+            if g != undefined do select g
+            MaxTools_Status ("Group  ·  " + newName + " created and selected.") type:#ok
         )
     )
-    else if selection.count == 1 then MaxTools_Status "Merge  ·  Select at least 2 objects." type:#warn
-    else MaxTools_Status "Merge  ·  Please select objects." type:#warn
+    else if selection.count == 1 then MaxTools_Status "Group  ·  Select at least 2 objects." type:#warn
+    else MaxTools_Status "Group  ·  Please select objects." type:#warn
 )
 
 fn MT_Attach =
@@ -223,6 +225,70 @@ fn MT_Attach =
         MaxTools_Status "Merge  ·  Merged into one object and centered." type:#ok
     )
     else MaxTools_Status "Merge  ·  No valid geometry in selection." type:#warn
+)
+
+-- ----- Spline attach / detach -----
+fn MT_SelShapes = (for o in selection where superClassOf o == Shape and not (isGroupHead o) collect o)
+
+-- Seçili shape'leri ilkinde birleştirir (Editable Spline), pivotu ortalar
+fn MT_SplineAttach =
+(
+    local shps = MT_SelShapes()
+    if shps.count < 2 then MaxTools_Status "Splines  ·  Select at least 2 shapes." type:#warn
+    else
+    (
+        local base = shps[1]
+        undo "Attach Splines" on
+        (
+            convertToSplineShape base
+            for i = 2 to shps.count do
+            (
+                convertToSplineShape shps[i]
+                addAndWeld base shps[i] -1   -- kaynak shape silinir, uçlar kaynaşmaz
+            )
+            updateShape base
+            centerPivot base
+            select base
+        )
+        MaxTools_Status ("Splines  ·  " + shps.count as string + " shapes attached into " + base.name + ".") type:#ok
+    )
+)
+
+-- Her ayrı spline'ı kendi objesine ayırır (kopyalayıp diğer spline'ları siler: renderable ayarları ve materyal korunur)
+fn MT_SplineDetach =
+(
+    local shps = MT_SelShapes()
+    if shps.count == 0 then MaxTools_Status "Splines  ·  Please select shapes." type:#warn
+    else
+    (
+        local made = #(), skipped = 0
+        undo "Detach Splines" on
+        (
+            for o in shps do
+            (
+                convertToSplineShape o
+                local n = numSplines o
+                if n < 2 then skipped += 1
+                else
+                (
+                    for k = 1 to n do
+                    (
+                        local c = copy o
+                        c.name = uniqueName (o.name + "_spline_")
+                        for d = n to 1 by -1 where d != k do deleteSpline c d
+                        updateShape c
+                        centerPivot c
+                        append made c
+                    )
+                    delete o
+                )
+            )
+            if made.count > 0 do select made
+        )
+        local msg = "Splines  ·  " + made.count as string + " spline object(s) created"
+        if skipped > 0 do msg += ", " + skipped as string + " shape(s) already had a single spline"
+        MaxTools_Status (msg + ".") type:(if made.count > 0 then #ok else #warn)
+    )
 )
 
 fn MT_Ref =
@@ -378,6 +444,270 @@ fn MT_DropToGround mode =
         local msg = "Ground  ·  " + moved as string + " object(s)/group(s) dropped" + (if mode == 2 then " onto surfaces below" else " to Z=0")
         if skipped > 0 do msg += ", " + skipped as string + " skipped" + (if mode == 2 then " (nothing below)" else "")
         MaxTools_Status (msg + ".") type:(if moved == 0 then #warn else #ok)
+    )
+)
+
+-- =========================================
+-- ARAÇLAR: GRUP (Ungroup / Open / Open Recursively / Close)
+-- =========================================
+-- Seçimdeki en dıştaki grup başları (iç içe seçilmiş başlar tekrar sayılmaz)
+fn MT_TopHeads =
+(
+    local hs = for o in selection where isGroupHead o collect o
+    for h in hs where not (MT_HasAncestorIn h hs) collect h
+)
+
+fn MT_Ungroup =
+(
+    local heads = MT_TopHeads()
+    if heads.count == 0 then MaxTools_Status "Group  ·  Please select a group." type:#warn
+    else
+    (
+        local kids = #()
+        undo "Ungroup" on
+        (
+            for h in heads do
+            (
+                for c in h.children do append kids c
+                ungroup h
+            )
+            kids = for k in kids where isValidNode k collect k
+            select kids
+        )
+        MaxTools_Status ("Group  ·  " + heads.count as string + " group(s) ungrouped, " + kids.count as string + " object(s) selected.") type:#ok
+    )
+)
+
+-- İç (alt) grupları açar / kapatır; dıştaki grup Max'in kendi komutuyla açılıp kapanır
+-- (setGroupOpen yalnızca bayrağı değiştiriyor, pembe grup kutusu çizilmiyordu)
+fn MT_OpenNested h =
+(
+    local n = 0
+    for c in h.children where isGroupHead c do
+    (
+        if not (isOpenGroupHead c) do (setGroupOpen c true; n += 1)
+        n += MT_OpenNested c
+    )
+    n
+)
+
+fn MT_CloseNested h =
+(
+    for c in h.children where isGroupHead c do
+    (
+        MT_CloseNested c
+        if isOpenGroupHead c do setGroupOpen c false
+    )
+)
+
+fn MT_GroupOpen recursive =
+(
+    local heads = MT_TopHeads()
+    if heads.count == 0 then MaxTools_Status "Group  ·  Please select a closed group." type:#warn
+    else
+    (
+        local n = 0
+        for h in heads where not (isOpenGroupHead h) do n += 1
+        if recursive do for h in heads do n += MT_OpenNested h
+        select heads
+        max group open
+        MaxTools_Status ("Group  ·  " + n as string + " group(s) opened" + (if recursive then " (including nested groups)." else ".")) type:(if n > 0 then #ok else #info)
+    )
+)
+
+fn MT_GroupClose =
+(
+    -- Seçili objelerin içinde bulunduğu en dıştaki açık grup
+    local heads = #()
+    for o in selection do
+    (
+        local top = undefined
+        local p = if isGroupHead o then o else o.parent
+        while p != undefined and isGroupHead p do
+        (
+            if isOpenGroupHead p do top = p
+            p = p.parent
+        )
+        if top != undefined do appendIfUnique heads top
+    )
+    if heads.count == 0 then MaxTools_Status "Group  ·  Select an open group or an object inside it." type:#warn
+    else
+    (
+        for h in heads do MT_CloseNested h
+        select heads
+        max group close
+        MaxTools_Status ("Group  ·  " + heads.count as string + " group(s) closed and selected.") type:#ok
+    )
+)
+
+-- =========================================
+-- ARAÇLAR: UVW MAP (hazır tip ve boyut)
+-- Üstte zaten UVW Map varsa yenisi eklenmez, o güncellenir (hazır ayarlar hızlıca denenebilsin).
+-- =========================================
+-- mapType: 1 Box, 2 Planar, 3 Cylinder, 4 Sphere. size: görüntü birimiyle (UVW Map panelindeki gibi)
+fn MT_ApplyUVWMap mapType size =
+(
+    local geos = for o in selection where superClassOf o == GeometryClass and not (isGroupHead o) collect o
+    if geos.count == 0 then MaxTools_Status "UVW Map  ·  Please select geometry." type:#warn
+    else
+    (
+        local sz = try (units.decodeValue (size as string)) catch undefined
+        if sz == undefined or sz <= 0 do sz = size as float
+        local mt = (#(4, 0, 1, 2))[mapType]
+        local typeName = (#("Box", "Planar", "Cylinder", "Sphere"))[mapType]
+        local added = 0, updated = 0
+        undo "UVW Map Preset" on
+        (
+            for o in geos do
+            (
+                local m = undefined
+                if o.modifiers.count > 0 and classOf o.modifiers[1] == Uvwmap then (m = o.modifiers[1]; updated += 1)
+                else (m = Uvwmap(); addModifier o m; added += 1)
+                m.maptype = mt
+                m.length = sz
+                m.width = sz
+                m.height = sz
+                m.utile = 1.0
+                m.vtile = 1.0
+                m.wtile = 1.0
+                try (m.realWorldMapSize = false) catch()
+            )
+        )
+        local msg = "UVW Map  ·  " + typeName + " " + size as string + " applied to " + geos.count as string + " object(s)"
+        if updated > 0 do msg += " (" + updated as string + " existing UVW Map updated)"
+        MaxTools_Status (msg + ".") type:#ok
+    )
+)
+
+-- =========================================
+-- ARAÇLAR: RASTGELE MATERYAL ID / WIRECOLOR
+-- =========================================
+-- Editable Poly (taban obje): her elemente rastgele ID; dönüş: element sayısı
+fn MT_RandIDsPolyElements p maxId =
+(
+    local nf = polyop.getNumFaces p
+    local done = #{}
+    done.count = nf
+    local n = 0
+    for f = 1 to nf where not done[f] do
+    (
+        local el = polyop.getElementsUsingFace p #{f}
+        polyop.setFaceMatID p el (random 1 maxId)
+        done += el
+        n += 1
+    )
+    n
+)
+
+-- Editable Mesh (modifier'sız): her elemente rastgele ID
+fn MT_RandIDsMeshElements o maxId =
+(
+    local nf = o.numfaces
+    local done = #{}
+    done.count = nf
+    local n = 0
+    for f = 1 to nf where not done[f] do
+    (
+        local el = meshop.getElementsUsingFace o #{f}
+        local id = random 1 maxId
+        for g in el do setFaceMatID o g id
+        done += el
+        n += 1
+    )
+    update o
+    n
+)
+
+-- mode: 1 her element, 2 her obje. Poly/Mesh dışındaki objelere Material modifier eklenir (obje tipi değişmez).
+fn MT_RandomMatIDs mode maxId =
+(
+    local geos = for o in selection where superClassOf o == GeometryClass and not (isGroupHead o) collect o
+    if geos.count == 0 then MaxTools_Status "Material ID  ·  Please select geometry." type:#warn
+    else
+    (
+        local nElem = 0, nObj = 0, nMod = 0
+        undo "Random Material IDs" on
+        (
+            for o in geos do
+            (
+                local isPoly = classOf o.baseObject == Editable_Poly
+                local isMesh = classOf o == Editable_mesh
+                if isPoly then
+                (
+                    if mode == 1 then nElem += MT_RandIDsPolyElements o.baseObject maxId
+                    else (polyop.setFaceMatID o.baseObject #{1..(polyop.getNumFaces o.baseObject)} (random 1 maxId); nObj += 1)
+                )
+                else if isMesh then
+                (
+                    if mode == 1 then nElem += MT_RandIDsMeshElements o maxId
+                    else
+                    (
+                        local id = random 1 maxId
+                        for f = 1 to o.numfaces do setFaceMatID o f id
+                        update o
+                        nObj += 1
+                    )
+                )
+                else
+                (
+                    local mm = Materialmodifier()
+                    mm.materialID = random 1 maxId
+                    addModifier o mm
+                    nMod += 1
+                )
+            )
+        )
+        redrawViews()
+        local parts = #()
+        if nElem > 0 do append parts (nElem as string + " element(s)")
+        if nObj > 0 do append parts (nObj as string + " object(s)")
+        if nMod > 0 do append parts (nMod as string + " object(s) via Material modifier")
+        local txt = ""
+        for i = 1 to parts.count do txt += (if i > 1 then ", " else "") + parts[i]
+        MaxTools_Status ("Material ID  ·  Random IDs 1-" + maxId as string + ": " + txt + ".") type:#ok
+    )
+)
+
+-- Okunaklı rastgele renk (çok koyu / çok parlak değil)
+fn MT_RandomColor =
+(
+    local c = color 200 100 100
+    c.h = random 0.0 255.0
+    c.s = random 110.0 200.0
+    c.v = random 150.0 235.0
+    c
+)
+
+-- scope: 1 seçim, 2 tüm sahne. byGroup: bir grubun içindekiler aynı rengi alır
+fn MT_RandomWirecolor scope byGroup =
+(
+    local src = if scope == 2 then (objects as array) else (selection as array)
+    src = for o in src where not (isGroupHead o) collect o
+    if src.count == 0 then MaxTools_Status ("Wirecolor  ·  " + (if scope == 2 then "The scene is empty." else "Please select objects.")) type:#warn
+    else
+    (
+        local heads = #(), cols = #()
+        undo "Random Wirecolor" on
+        (
+            for o in src do
+            (
+                local c = undefined
+                if byGroup and isGroupMember o and o.parent != undefined then
+                (
+                    -- en dıştaki grup başı
+                    local h = o.parent
+                    while h.parent != undefined and isGroupHead h.parent do h = h.parent
+                    local i = findItem heads h
+                    if i == 0 then (c = MT_RandomColor(); append heads h; append cols c) else c = cols[i]
+                )
+                else c = MT_RandomColor()
+                o.wirecolor = c
+            )
+        )
+        redrawViews()
+        local msg = "Wirecolor  ·  " + src.count as string + " object(s) recolored"
+        if heads.count > 0 do msg += " (" + heads.count as string + " group(s) share one color each)"
+        MaxTools_Status (msg + ".") type:#ok
     )
 )
 
@@ -3385,11 +3715,20 @@ fn MT_Action id =
         "detach":    MT_Detach()
         "copy":      MT_Copy()
         "paste":     MT_Paste()
+        "splAttach": MT_SplineAttach()
+        "splDetach": MT_SplineDetach()
         "group":     MT_Group()
+        "ungroup":   MT_Ungroup()
+        "grpOpen":   MT_GroupOpen false
+        "grpOpenR":  MT_GroupOpen true
+        "grpClose":  MT_GroupClose()
         "attach":    MT_Attach()
         "ref":       MT_Ref()
         "drop":      MT_DropToGround (MT_State "dropMode")
         "rxReset":   MT_ResetXForms (MT_State "rxScope") (MT_Flag "rxGroups") (MT_Flag "rxCollapse")
+        "uvwApply":  MT_ApplyUVWMap (MT_State "uvwType") (if (MT_State "uvwSize") == 4 then (MT_Num "uvwCustom") else (#(100, 200, 300))[MT_State "uvwSize"])
+        "mtidRand":  MT_RandomMatIDs (MT_State "mtidMode") (MT_Num "mtidMax")
+        "wcRand":    MT_RandomWirecolor (MT_State "wcScope") (MT_Flag "wcGroup")
         "uvAll":     MT_UVRandomAll()
         "uvSel":     MT_UVRandomSel()
         "seamAdd":   MT_UV_SeamAdd()

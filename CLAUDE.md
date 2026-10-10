@@ -27,6 +27,9 @@ yüklediği kurulumdur. Üst klasördeki (`D:\3Ds Max Element Detach\*.ms|*.cs`)
   `SetStatus msg tip(0 bilgi,1 ok,2 uyarı,3 hata,4 çalışıyor)`, `SetProgress`, `ConfigureUpdates`, `CheckForUpdates`.
 - `MAXFORM` tanımıyla `MaxCustomControls.MaxForm`'dan türer (yoksa `Form`). Kenarlıksız, kenardan boyutlandırılır
   (WM_NCHITTEST), duyarlı yerleşim: kartlar 305px, sığdığı kadar sütun; dar pencerede menü ikonlara küçülür.
+- **Bölümler:** sayfa içinde `Section(pg, "Başlık")` tam genişlikte başlık açar, sonraki kartlar o başlığa girer.
+  Modeling: Split & Merge / Transform / UV / Scene. Yeni aracı ilgili sayfadaki uygun bölüme koy (pivot araçları →
+  Transform); uygun yoksa yeni bölüm aç. Araçları başka sayfaya taşıma (kullanıcı istemedi).
 - **Yeni araç eklemek:** C# `Build*Page` içine `Card(...)` + kontroller (`Btn` id'si benzersiz), `MaxTools.ms`'de
   `MT_Action` içine `"<id>": ...` ve araç fonksiyonu (`MaxTools_Status ... type:#ok` ile durum yazar, `undo "..." on (...)`).
 - Ayarlar: `<plugcfg>\MaxTools.ini` ([Window] X,Y,W,H,Page; [Update] AutoCheck; [SideBar] Show).
